@@ -90,6 +90,10 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   );
   const [wizardPick, setWizardPick] = useState(0);
   const [wizardKey, setWizardKey] = useState('');
+  // Highlighted button in the yes/no confirm. Arrows move between
+  // 'yes' and 'no'; enter activates the highlighted one. 'y' / 'n' also
+  // work as direct shortcuts for users who already know the answer.
+  const [confirmChoice, setConfirmChoice] = useState<'yes' | 'no'>('yes');
   // Once the user has explicitly declined the setup confirm, don't keep
   // re-popping the yellow "no key" panel - that looks identical to the
   // confirm and makes it feel like `n` did nothing.
@@ -270,13 +274,40 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     // Wizard: yes/no confirm (shown automatically on first run when no
     // provider key is configured).
     if (wizardStep === 'confirm') {
-      if (key.escape || char === 'n' || char === 'N') {
+      if (key.escape) {
         skipSetup();
         return;
       }
-      if (key.return || char === 'y' || char === 'Y') {
+      if (key.leftArrow) {
+        setConfirmChoice('yes');
+        return;
+      }
+      if (key.rightArrow) {
+        setConfirmChoice('no');
+        return;
+      }
+      if (key.tab) {
+        setConfirmChoice((c) => (c === 'yes' ? 'no' : 'yes'));
+        return;
+      }
+      if (char === 'y' || char === 'Y') {
+        setConfirmChoice('yes');
         setWizardStep('pick');
         setWizardPick(0);
+        return;
+      }
+      if (char === 'n' || char === 'N') {
+        setConfirmChoice('no');
+        skipSetup();
+        return;
+      }
+      if (key.return) {
+        if (confirmChoice === 'yes') {
+          setWizardStep('pick');
+          setWizardPick(0);
+        } else {
+          skipSetup();
+        }
         return;
       }
       if (key.ctrl && char === 'c') {
@@ -467,7 +498,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         </Box>
       )}
 
-      {wizardStep === 'confirm' && <WizardConfirmPanel />}
+      {wizardStep === 'confirm' && <WizardConfirmPanel choice={confirmChoice} />}
       {wizardStep === 'pick' && <WizardPickPanel selectedIdx={wizardPick} />}
       {wizardStep === 'key' && (
         <WizardKeyPanel provider={SETUP_PROVIDERS[wizardPick]!} maskedKey={mask(wizardKey)} />
@@ -572,7 +603,7 @@ function SetupHint(): React.ReactElement {
   );
 }
 
-function WizardConfirmPanel(): React.ReactElement {
+function WizardConfirmPanel({ choice }: { choice: 'yes' | 'no' }): React.ReactElement {
   return (
     <Box
       borderStyle="round"
@@ -588,17 +619,42 @@ function WizardConfirmPanel(): React.ReactElement {
           {'CodeRouter needs at least one provider key to run agent, planner, debug, or review modes.'}
         </Text>
         <Box marginTop={1}>
-          <Text>{'Would you like to configure a provider now?  '}</Text>
-          <Text bold color="green">[Y]</Text>
-          <Text color="gray">{'es  /  '}</Text>
-          <Text bold>[N]</Text>
-          <Text color="gray">{'o (set up later with '}</Text>
-          <Text bold color="green">/setup</Text>
-          <Text color="gray">{')'}</Text>
+          <Text>Would you like to configure a provider now?</Text>
         </Box>
+        <Box marginTop={1}>
+          <Text>  </Text>
+          <ConfirmButton label="Yes" selected={choice === 'yes'} />
+          <Text>   </Text>
+          <ConfirmButton label="No" selected={choice === 'no'} />
+        </Box>
+      </Box>
+      <Box marginTop={1}>
+        <Text color="gray">
+          ← → to choose · enter to confirm · y / n for shortcut · esc to skip
+        </Text>
       </Box>
     </Box>
   );
+}
+
+function ConfirmButton({
+  label,
+  selected,
+}: {
+  label: string;
+  selected: boolean;
+}): React.ReactElement {
+  // Selected button is shown inverse-on-green so it pops against the
+  // yellow panel; unselected is plain text with brackets so it still
+  // reads as a clickable choice.
+  if (selected) {
+    return (
+      <Text backgroundColor="green" color="black" bold>
+        {`  ${label}  `}
+      </Text>
+    );
+  }
+  return <Text color="gray">{`  ${label}  `}</Text>;
 }
 
 function WizardPickPanel({ selectedIdx }: { selectedIdx: number }): React.ReactElement {
@@ -714,19 +770,22 @@ function InputBox({
   busy: boolean;
   wizardStep: WizardStep;
 }): React.ReactElement {
-  // Disabled while the wizard owns input. We still render the box (so the
-  // layout doesn't jump) but it shows a hint instead of accepting keys.
+  // Visibly disabled while the wizard owns input: no green prompt, no
+  // cursor, dim border + body so it doesn't look like a live chatbox
+  // sitting next to the wizard.
   if (wizardStep !== 'idle') {
     const hint =
       wizardStep === 'confirm'
-        ? '(press y / n in the panel above)'
+        ? 'chat disabled — answer the prompt above'
         : wizardStep === 'pick'
-          ? '(use ↑ ↓ + enter in the picker above)'
-          : '(typing into the key field above)';
+          ? 'chat disabled — pick a provider above'
+          : 'chat disabled — paste your API key above';
     return (
-      <Box borderStyle="round" borderColor="gray" paddingX={1}>
-        <Text color="green" bold>{'> '}</Text>
-        <Text color="gray">{hint}</Text>
+      <Box borderStyle="single" borderColor="gray" borderDimColor paddingX={1}>
+        <Text dimColor>{'  '}</Text>
+        <Text dimColor italic>
+          {hint}
+        </Text>
       </Box>
     );
   }
@@ -786,7 +845,9 @@ function StatusRow({
 
 function HintRow({ wizardStep }: { wizardStep: WizardStep }): React.ReactElement {
   if (wizardStep === 'confirm') {
-    return <Text color="gray">y to configure   ·   n to skip</Text>;
+    return (
+      <Text color="gray">← → to choose   ·   enter to confirm   ·   esc to skip</Text>
+    );
   }
   if (wizardStep !== 'idle') {
     return <Text color="gray">wizard active   ·   esc to cancel</Text>;
