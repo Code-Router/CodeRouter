@@ -486,7 +486,8 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         )}
       </Static>
 
-      {showWelcome && <WelcomePanel mode={mode} />}
+      {showWelcome && <WordmarkPanel />}
+      {showWelcome && wizardStep === 'idle' && <TipsPanel mode={mode} />}
       {showWelcome && !setupState.configured && !setupDismissed && wizardStep === 'idle' && (
         <SetupHint />
       )}
@@ -524,7 +525,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   );
 }
 
-function WelcomePanel({ mode }: { mode: Mode }): React.ReactElement {
+function WordmarkPanel(): React.ReactElement {
   const width = process.stdout.columns ?? 80;
   // Pixel-block wordmark needs ~96 cols once you account for the Box's
   // border + padding; fall back to the compact ANSI wordmark below that.
@@ -532,49 +533,53 @@ function WelcomePanel({ mode }: { mode: Mode }): React.ReactElement {
   const wordmarkLines = wordmark.split('\n');
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
-      <Box flexDirection="column" marginBottom={1}>
-        {wordmarkLines.map((line, i) => (
-          <Text key={`wm-${i}`} color="green" bold>
-            {line}
-          </Text>
-        ))}
-        <Box marginTop={1}>
-          <Text color="green">
-            {'  '}{BRAND_GLYPH}{'  '}
-          </Text>
-          <Text color="gray">{WORDMARK_TAGLINE}</Text>
-          <Text color="gray">{`   ${BRAND_NAME} v0.1.0`}</Text>
-        </Box>
+      {wordmarkLines.map((line, i) => (
+        <Text key={`wm-${i}`} color="green" bold>
+          {line}
+        </Text>
+      ))}
+      <Box marginTop={1}>
+        <Text color="green">
+          {'  '}{BRAND_GLYPH}{'  '}
+        </Text>
+        <Text color="gray">{WORDMARK_TAGLINE}</Text>
+        <Text color="gray">{`   ${BRAND_NAME} v0.1.0`}</Text>
       </Box>
-      <Box
-        borderStyle="round"
-        borderColor="green"
-        paddingX={2}
-        paddingY={1}
-        flexDirection="column"
-      >
-        <Box flexDirection="column">
-          <Text bold>Tips for getting started</Text>
-          <Text>
-            <Text color="gray">{'  Type '}</Text>
-            <Text bold color="green">/</Text>
-            <Text color="gray">{' to browse all commands'}</Text>
-          </Text>
-          <Text>
-            <Text color="gray">{'  Type '}</Text>
-            <Text bold color="green">/help</Text>
-            <Text color="gray">{' for the full reference'}</Text>
-          </Text>
-          <Text>
-            <Text color="gray">{'  Plain text runs in the current mode ('}</Text>
-            <Text bold>{mode}</Text>
-            <Text color="gray">{')'}</Text>
-          </Text>
-        </Box>
-        <Box marginTop={1} flexDirection="column">
-          <Text bold>Modes</Text>
-          <Text color="gray">  /plan · /masterplan · /agent · /debug · /review</Text>
-        </Box>
+    </Box>
+  );
+}
+
+function TipsPanel({ mode }: { mode: Mode }): React.ReactElement {
+  return (
+    <Box
+      borderStyle="round"
+      borderColor="green"
+      paddingX={2}
+      paddingY={1}
+      marginBottom={1}
+      flexDirection="column"
+    >
+      <Box flexDirection="column">
+        <Text bold>Tips for getting started</Text>
+        <Text>
+          <Text color="gray">{'  Type '}</Text>
+          <Text bold color="green">/</Text>
+          <Text color="gray">{' to browse all commands'}</Text>
+        </Text>
+        <Text>
+          <Text color="gray">{'  Type '}</Text>
+          <Text bold color="green">/help</Text>
+          <Text color="gray">{' for the full reference'}</Text>
+        </Text>
+        <Text>
+          <Text color="gray">{'  Plain text runs in the current mode ('}</Text>
+          <Text bold>{mode}</Text>
+          <Text color="gray">{')'}</Text>
+        </Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Text bold>Modes</Text>
+        <Text color="gray">  /plan · /masterplan · /agent · /debug · /review</Text>
       </Box>
     </Box>
   );
