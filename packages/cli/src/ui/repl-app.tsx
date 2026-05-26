@@ -90,6 +90,10 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   );
   const [wizardPick, setWizardPick] = useState(0);
   const [wizardKey, setWizardKey] = useState('');
+  // Once the user has explicitly declined the setup confirm, don't keep
+  // re-popping the yellow "no key" panel - that looks identical to the
+  // confirm and makes it feel like `n` did nothing.
+  const [setupDismissed, setSetupDismissed] = useState(false);
 
   // Slash-command palette: visible while the user is typing the command
   // name (no space yet). Once they hit space, we switch to "arg entry" and
@@ -165,8 +169,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   function skipSetup(): void {
     setWizardStep('idle');
     setWizardKey('');
+    setSetupDismissed(true);
     pushSystem(
-      '  skipped setup - run /setup any time to configure a provider key',
+      '  ok - skipped setup. run /setup any time to configure a provider key.',
       'warn',
     );
   }
@@ -451,7 +456,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       </Static>
 
       {showWelcome && <WelcomePanel mode={mode} />}
-      {showWelcome && !setupState.configured && wizardStep === 'idle' && <SetupHint />}
+      {showWelcome && !setupState.configured && !setupDismissed && wizardStep === 'idle' && (
+        <SetupHint />
+      )}
 
       {busy && (
         <Box marginBottom={1}>

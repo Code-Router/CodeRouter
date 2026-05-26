@@ -115,20 +115,33 @@ export function pick(
   }
 
   // 6) Default route: balanced agent.
-  const def = preferProvider(ctx, ['claude_code'], 'sonnet') ?? preferProvider(ctx, ['anthropic'], 'claude-sonnet-4-5');
+  const def =
+    preferProvider(ctx, ['claude_code'], 'sonnet') ??
+    preferProvider(ctx, ['anthropic'], 'claude-sonnet-4-5') ??
+    preferProvider(ctx, ['openai'], 'gpt-5') ??
+    preferProvider(ctx, ['openai'], 'gpt-4o') ??
+    preferProvider(ctx, ['openrouter'], 'anthropic/claude-sonnet-4-5') ??
+    preferProvider(ctx, ['deepseek'], 'deepseek-chat') ??
+    preferProvider(ctx, ['groq'], 'llama-3.3-70b-versatile') ??
+    preferProvider(ctx, ['google'], 'gemini-2.5-pro');
   if (def) return { ...def, rationale: `default:agent (taskType=${taskType})` };
 
-  // 7) Last resort: any registered route.
-  const first = ctx.registry.list()[0];
-  if (!first) throw new Error('Router: no providers registered');
-  const model = Object.keys(first.models)[0];
-  if (!model) throw new Error(`Router: provider ${first.name} has no models`);
-  return {
-    provider: first.adapter,
-    model,
-    rationale: 'fallback: first registered route',
-    via: first.name,
-  };
+  // 7) Last resort: the first ready provider in the registry.
+  for (const p of ctx.registry.list()) {
+    if (!ctx.registry.isReady(p.name)) continue;
+    const model = Object.keys(p.models)[0];
+    if (!model) continue;
+    return {
+      provider: p.adapter,
+      model,
+      rationale: 'fallback: first ready provider',
+      via: p.name,
+    };
+  }
+  throw new Error(
+    'Router: no usable provider - configure an API key with /setup or export one of ' +
+      'ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY',
+  );
 }
 
 /**
@@ -180,16 +193,19 @@ function preferProvider(
   for (const name of providers) {
     const cfg = ctx.registry.list().find((p) => p.name === name);
     if (!cfg) continue;
-    if (cfg.models[model]) {
-      const ref: RouteRef = {
-        provider: cfg.adapter,
-        model,
-        via: cfg.name,
-        rationale: '',
-      };
-      if (isForbidden(ref, ctx)) continue;
-      return ref;
-    }
+    if (!cfg.models[model]) continue;
+    // Don't surface a route the registry can't actually authenticate -
+    // otherwise the run fails downstream with "API_KEY not set" even
+    // though we know it ahead of time and could pick something else.
+    if (!ctx.registry.isReady(name)) continue;
+    const ref: RouteRef = {
+      provider: cfg.adapter,
+      model,
+      via: cfg.name,
+      rationale: '',
+    };
+    if (isForbidden(ref, ctx)) continue;
+    return ref;
   }
   return null;
 }

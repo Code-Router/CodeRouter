@@ -43,6 +43,27 @@ export class ProviderRegistry {
   }
 
   /**
+   * Returns true when the provider can actually make a call: it either
+   * has a literal `apiKey`, an `apiKeyEnv` whose env var is set, or it's
+   * a local-only adapter (ollama / codex / claude_code) that delegates
+   * to a host binary instead of an HTTP API.
+   *
+   * The router uses this to filter shape-based candidates so we don't
+   * route to e.g. Google when GOOGLE_API_KEY isn't set just because the
+   * default registry knows about Gemini.
+   */
+  isReady(name: string): boolean {
+    const provider = this.providers.get(name);
+    if (!provider) return false;
+    if (provider.adapter === 'ollama' || provider.adapter === 'codex' || provider.adapter === 'claude_code') {
+      return true;
+    }
+    if (provider.apiKey) return true;
+    if (provider.apiKeyEnv && process.env[provider.apiKeyEnv]) return true;
+    return false;
+  }
+
+  /**
    * Resolve a route string like 'deepseek,deepseek-reasoner' or
    * 'openrouter,anthropic/claude-sonnet-4'.
    */
