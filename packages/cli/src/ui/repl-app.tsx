@@ -94,10 +94,6 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // 'yes' and 'no'; enter activates the highlighted one. 'y' / 'n' also
   // work as direct shortcuts for users who already know the answer.
   const [confirmChoice, setConfirmChoice] = useState<'yes' | 'no'>('yes');
-  // Once the user has explicitly declined the setup confirm, don't keep
-  // re-popping the yellow "no key" panel - that looks identical to the
-  // confirm and makes it feel like `n` did nothing.
-  const [setupDismissed, setSetupDismissed] = useState(false);
 
   // Slash-command palette: visible while the user is typing the command
   // name (no space yet). Once they hit space, we switch to "arg entry" and
@@ -173,7 +169,6 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   function skipSetup(): void {
     setWizardStep('idle');
     setWizardKey('');
-    setSetupDismissed(true);
     pushSystem(
       '  ok - skipped setup. run /setup any time to configure a provider key.',
       'warn',
@@ -492,9 +487,6 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
 
       {showWelcome && <WordmarkPanel />}
       {showWelcome && wizardStep === 'idle' && <TipsPanel mode={mode} />}
-      {showWelcome && !setupState.configured && !setupDismissed && wizardStep === 'idle' && (
-        <SetupHint />
-      )}
 
       {busy && (
         <Box marginBottom={1}>
@@ -518,7 +510,13 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
           just confuse — the wizard panels already carry their own hints. */}
       {wizardStep === 'idle' && (
         <>
-          <InputBox value={input} cursor={cursor} busy={busy} />
+          {!setupState.configured && <NoProviderReminder />}
+          <InputBox
+            value={input}
+            cursor={cursor}
+            busy={busy}
+            configured={setupState.configured}
+          />
           <Box marginTop={1} paddingX={1} flexDirection="column">
             <StatusRow mode={mode} effort={effort} apply={apply} fast={fast} ready={setupState.ready} />
             <HintRow />
@@ -584,35 +582,6 @@ function TipsPanel({ mode }: { mode: Mode }): React.ReactElement {
       <Box marginTop={1} flexDirection="column">
         <Text bold>Modes</Text>
         <Text color="gray">  /plan · /masterplan · /agent · /debug · /review</Text>
-      </Box>
-    </Box>
-  );
-}
-
-function SetupHint(): React.ReactElement {
-  return (
-    <Box
-      borderStyle="round"
-      borderColor="yellow"
-      paddingX={2}
-      paddingY={1}
-      marginBottom={1}
-      flexDirection="column"
-    >
-      <Text bold color="yellow">! No provider API key detected</Text>
-      <Box marginTop={1} flexDirection="column">
-        <Text color="gray">
-          {'CodeRouter needs at least one provider key to run agent / planner / debug modes.'}
-        </Text>
-        <Text>
-          <Text color="gray">{'Run '}</Text>
-          <Text bold color="green">/setup</Text>
-          <Text color="gray">{' to paste a key — or export one of:'}</Text>
-        </Text>
-        <Text color="gray">
-          {'  '}
-          {SETUP_PROVIDERS.map((p) => `$${p.envVar}`).join('  ')}
-        </Text>
       </Box>
     </Box>
   );
@@ -778,24 +747,45 @@ function InputBox({
   value,
   cursor,
   busy,
+  configured,
 }: {
   value: string;
   cursor: number;
   busy: boolean;
+  configured: boolean;
 }): React.ReactElement {
+  // Border color encodes session health: green while a run is in
+  // flight, yellow when no provider is configured (so the user can't
+  // miss it sitting in the chat), gray otherwise.
+  const borderColor = busy ? 'green' : configured ? 'gray' : 'yellow';
+  const placeholder = configured
+    ? 'prompt the agent — or type / for commands'
+    : 'no provider configured — type /setup to add one (or / for commands)';
   return (
-    <Box borderStyle="round" borderColor={busy ? 'green' : 'gray'} paddingX={1}>
+    <Box borderStyle="round" borderColor={borderColor} paddingX={1}>
       <Text color="green" bold>{'> '}</Text>
       {busy ? (
         <Text color="gray">{value || 'working…'}</Text>
       ) : value.length === 0 ? (
         <Text>
           <Text inverse> </Text>
-          <Text color="gray">{'  try "/agent rename getCwd" — or type / to browse commands'}</Text>
+          <Text color="gray">{`  ${placeholder}`}</Text>
         </Text>
       ) : (
         renderInputWithCursor(value, cursor)
       )}
+    </Box>
+  );
+}
+
+function NoProviderReminder(): React.ReactElement {
+  return (
+    <Box marginBottom={1} paddingX={1}>
+      <Text bold color="yellow">! </Text>
+      <Text color="yellow">no provider configured</Text>
+      <Text color="gray">{'  —  agent / plan / debug / review runs will fail until you '}</Text>
+      <Text bold color="green">/setup</Text>
+      <Text color="gray"> a provider key</Text>
     </Box>
   );
 }
