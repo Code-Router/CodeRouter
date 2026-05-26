@@ -6,6 +6,7 @@ import { renderBanner, renderPromptPrefix } from '../ui/banner.js';
 import { c } from '../ui/colors.js';
 import { printReport } from '../ui/report.js';
 import { askForRating } from '../ui/rating.js';
+import { runInkRepl } from '../ui/repl-app.js';
 
 export type ReplOpts = {
   cwd: string;
@@ -13,23 +14,25 @@ export type ReplOpts = {
 };
 
 /**
- * Claude-Code-shaped REPL.
+ * Entry point for the interactive REPL.
  *
- * Commands:
- *   /plan <prompt>       Quick Cursor-style planning
- *   /masterplan <prompt> 6-phase research-grade planning
- *   /agent <prompt>      Decisive execution
- *   /debug <prompt>      Investigation
- *   /review              Diff/PR review
- *   /route <prompt>      Show chosen route without running
- *   /effort low|medium|high|max
- *   /apply               Toggle "apply diff" for the next run
- *   /fast                Toggle "skip classifier" for the next run
- *   /help, /clear, /exit
- *
- * Unprefixed input -> current mode (default agent).
+ * Routes to the Ink-based TUI when stdin/stdout are both TTYs (the
+ * normal interactive case) and to a line-based readline loop for
+ * piped/non-TTY stdin (CI, `echo … | coderouter`).
  */
 export async function runReplCommand(opts: ReplOpts): Promise<void> {
+  if (process.stdin.isTTY && process.stdout.isTTY && !process.env.CODEROUTER_NO_TUI) {
+    await runInkRepl({ cwd: opts.cwd, initialMode: opts.initialMode });
+    return;
+  }
+  await runReadlineRepl(opts);
+}
+
+/**
+ * Line-based fallback REPL. Slash commands match the Ink UI 1:1; see
+ * {@link COMMANDS} in `ui/repl-app.tsx`.
+ */
+async function runReadlineRepl(opts: ReplOpts): Promise<void> {
   process.stdout.write(renderBanner());
   process.stdout.write(`  ${c.muted('type /help for commands, /exit to quit')}\n\n`);
 

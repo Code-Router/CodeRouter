@@ -12,12 +12,18 @@ import type {
   Effort,
   Mode,
   ModeOutput,
+  ProgressNotifier,
   ProviderConfig,
   RouteRef,
   Store,
 } from '@coderouter/core';
 import type { Report } from '@coderouter/core';
 import { spinnerProgress } from './ui/progress.js';
+
+export type ProgressAdapter = {
+  notifier: ProgressNotifier;
+  close(): void;
+};
 
 export type CliRunOpts = {
   prompt: string;
@@ -29,6 +35,12 @@ export type CliRunOpts = {
   route?: string;
   sessionId?: string;
   json?: boolean;
+  /**
+   * Optional progress adapter. When omitted, falls back to the default
+   * stdout spinner. The Ink REPL passes its own state-routing notifier
+   * here so progress doesn't fight Ink's renderer.
+   */
+  progress?: ProgressAdapter;
 };
 
 /**
@@ -46,7 +58,7 @@ export async function executeRun(opts: CliRunOpts): Promise<{
   const registry = new ProviderRegistry(providers);
   const store = await openStore(resolveDbPath(opts.cwd));
   const bias = deriveMemoryBias(store, { taskType: 'feature' });
-  const { notifier, close } = spinnerProgress();
+  const { notifier, close } = opts.progress ?? spinnerProgress();
 
   try {
     const output = await runMode(
