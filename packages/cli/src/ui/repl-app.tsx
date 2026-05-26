@@ -642,7 +642,6 @@ function ConfirmButton({
 }
 
 function WizardPickPanel({ selectedIdx }: { selectedIdx: number }): React.ReactElement {
-  const nameW = Math.max(...SETUP_PROVIDERS.map((p) => p.label.length));
   return (
     <Box
       borderStyle="round"
@@ -657,13 +656,10 @@ function WizardPickPanel({ selectedIdx }: { selectedIdx: number }): React.ReactE
         {SETUP_PROVIDERS.map((p, i) => {
           const isSel = i === selectedIdx;
           return (
-            <Box key={p.name}>
-              <Text color={isSel ? 'green' : undefined} bold={isSel}>
-                {isSel ? '▸ ' : '  '}
-                {p.label.padEnd(nameW + 2)}
-              </Text>
-              <Text color="gray">{`$${p.envVar}`}</Text>
-            </Box>
+            <Text key={p.name} color={isSel ? 'green' : undefined} bold={isSel}>
+              {isSel ? '▸ ' : '  '}
+              {p.label}
+            </Text>
           );
         })}
       </Box>
