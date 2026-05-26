@@ -1,0 +1,30 @@
+import { defineConfig } from 'tsup';
+
+export default defineConfig({
+  entry: [
+    'src/index.ts',
+    'src/adapters/index.ts',
+    'src/classify/index.ts',
+    'src/router/index.ts',
+    'src/sandbox/index.ts',
+    'src/validate/index.ts',
+    'src/modes/index.ts',
+    'src/memory/index.ts',
+    'src/store/index.ts',
+    'src/report/index.ts',
+    'src/config/index.ts',
+    'src/research/index.ts',
+    'src/handoff/index.ts',
+    'src/clarify/index.ts',
+    'src/context/index.ts',
+    'src/perf/index.ts',
+  ],
+  format: ['esm'],
+  dts: true,
+  splitting: false,
+  sourcemap: true,
+  clean: true,
+  target: 'node20',
+  platform: 'node',
+  shims: false,
+});
