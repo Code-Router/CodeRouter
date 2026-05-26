@@ -450,7 +450,11 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     }
   });
 
-  const showWelcome = history.length === 0;
+  // Keep the welcome (banner + tips) visible until the first real run
+  // completes. Skipping the setup wizard, running /help, /setup, etc.
+  // shouldn't make the tips vanish - we only consider an actual
+  // mode-output report a strong signal that the user is past onboarding.
+  const showWelcome = !history.some((i) => i.kind === 'report');
 
   return (
     <Box flexDirection="column">
