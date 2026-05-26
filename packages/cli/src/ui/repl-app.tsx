@@ -508,12 +508,18 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         <SuggestionsList items={suggestions} selectedIdx={suggIdx} />
       )}
 
-      <InputBox value={input} cursor={cursor} busy={busy} wizardStep={wizardStep} />
-
-      <Box marginTop={1} paddingX={1} flexDirection="column">
-        <StatusRow mode={mode} effort={effort} apply={apply} fast={fast} ready={setupState.ready} />
-        <HintRow wizardStep={wizardStep} />
-      </Box>
+      {/* The chatbox + status/hint footer are intentionally hidden while
+          the wizard owns input. Bringing them back at this point would
+          just confuse — the wizard panels already carry their own hints. */}
+      {wizardStep === 'idle' && (
+        <>
+          <InputBox value={input} cursor={cursor} busy={busy} />
+          <Box marginTop={1} paddingX={1} flexDirection="column">
+            <StatusRow mode={mode} effort={effort} apply={apply} fast={fast} ready={setupState.ready} />
+            <HintRow />
+          </Box>
+        </>
+      )}
     </Box>
   );
 }
@@ -763,33 +769,11 @@ function InputBox({
   value,
   cursor,
   busy,
-  wizardStep,
 }: {
   value: string;
   cursor: number;
   busy: boolean;
-  wizardStep: WizardStep;
 }): React.ReactElement {
-  // Visibly disabled while the wizard owns input: no green prompt, no
-  // cursor, dim border + body so it doesn't look like a live chatbox
-  // sitting next to the wizard.
-  if (wizardStep !== 'idle') {
-    const hint =
-      wizardStep === 'confirm'
-        ? 'chat disabled — answer the prompt above'
-        : wizardStep === 'pick'
-          ? 'chat disabled — pick a provider above'
-          : 'chat disabled — paste your API key above';
-    return (
-      <Box borderStyle="single" borderColor="gray" borderDimColor paddingX={1}>
-        <Text dimColor>{'  '}</Text>
-        <Text dimColor italic>
-          {hint}
-        </Text>
-      </Box>
-    );
-  }
-
   return (
     <Box borderStyle="round" borderColor={busy ? 'green' : 'gray'} paddingX={1}>
       <Text color="green" bold>{'> '}</Text>
@@ -843,15 +827,7 @@ function StatusRow({
   );
 }
 
-function HintRow({ wizardStep }: { wizardStep: WizardStep }): React.ReactElement {
-  if (wizardStep === 'confirm') {
-    return (
-      <Text color="gray">← → to choose   ·   enter to confirm   ·   esc to skip</Text>
-    );
-  }
-  if (wizardStep !== 'idle') {
-    return <Text color="gray">wizard active   ·   esc to cancel</Text>;
-  }
+function HintRow(): React.ReactElement {
   return (
     <Text color="gray">
       tab to complete   ·   /   for commands   ·   esc to clear
