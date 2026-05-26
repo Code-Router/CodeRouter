@@ -7,5 +7,6 @@ export default defineConfig({
     include: ['packages/**/*.test.ts', 'eval/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
     testTimeout: 20_000,
+    passWithNoTests: true,
   },
 });

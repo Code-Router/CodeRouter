@@ -1,5 +1,83 @@
-export async function runCli(_argv: string[]): Promise<void> {
-  // Filled in by the `cli` todo.
-  // eslint-disable-next-line no-console
-  console.log('coderouter cli scaffold');
+import { Command } from 'commander';
+import { runReplCommand } from './commands/repl.js';
+import { runOnceCommand } from './commands/once.js';
+import { runModeCommand } from './commands/mode.js';
+import { runMemoryCommand } from './commands/memory.js';
+import { runRouteCommand } from './commands/route.js';
+import { runInitCommand } from './commands/init.js';
+import { BRAND_NAME } from './branding/index.js';
+
+export async function runCli(argv: string[]): Promise<void> {
+  const program = new Command();
+  program
+    .name('coderouter')
+    .description(`${BRAND_NAME} - route smarter. ship faster.`)
+    .version('0.1.0');
+
+  // Default (no subcommand) -> REPL
+  program
+    .command('repl', { isDefault: true })
+    .description('start interactive CodeRouter REPL')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .action(async (opts: { cwd?: string }) => {
+      await runReplCommand({ cwd: opts.cwd ?? process.cwd() });
+    });
+
+  // Top-level: run once and exit
+  program
+    .command('run <prompt...>')
+    .description('run a single prompt non-interactively')
+    .option('-m, --mode <mode>', 'plan|masterplan|agent|debug|review', 'agent')
+    .option('-e, --effort <effort>', 'low|medium|high|max', 'medium')
+    .option('--fast', 'skip classifier/context/validators', false)
+    .option('--apply', 'apply diff to working tree on success', false)
+    .option('-r, --route <route>', 'force a specific route (provider,model)')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .option('--json', 'emit JSON report', false)
+    .action(async (promptParts: string[], opts) => {
+      await runOnceCommand({ prompt: promptParts.join(' '), ...opts });
+    });
+
+  // Mode commands (aliases for `run -m <mode>`)
+  for (const m of ['plan', 'masterplan', 'agent', 'debug', 'review'] as const) {
+    program
+      .command(`${m} [prompt...]`)
+      .description(`run CodeRouter in ${m} mode`)
+      .option('-e, --effort <effort>', 'low|medium|high|max', m === 'masterplan' ? 'high' : 'medium')
+      .option('--fast', 'skip classifier/context/validators', false)
+      .option('--apply', 'apply diff to working tree on success', false)
+      .option('-c, --cwd <path>', 'working directory', process.cwd())
+      .option('--json', 'emit JSON report', false)
+      .action(async (promptParts: string[], opts) => {
+        const prompt = (promptParts ?? []).join(' ').trim();
+        await runModeCommand(m, { prompt, ...opts });
+      });
+  }
+
+  program
+    .command('route <prompt...>')
+    .description('classify a prompt and show the chosen route (no execution)')
+    .option('-e, --effort <effort>', 'low|medium|high|max', 'medium')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .action(async (promptParts: string[], opts) => {
+      await runRouteCommand({ prompt: promptParts.join(' '), ...opts });
+    });
+
+  program
+    .command('memory <action> [key]')
+    .description('inspect/manage L5 persistent memory: show|forget|reset|export|import')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .action(async (action: string, key: string | undefined, opts: { cwd?: string }) => {
+      await runMemoryCommand({ action, key, cwd: opts.cwd ?? process.cwd() });
+    });
+
+  program
+    .command('init')
+    .description('first-run onboarding: detect host agent, install MCP, write config')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .action(async (opts: { cwd?: string }) => {
+      await runInitCommand({ cwd: opts.cwd ?? process.cwd() });
+    });
+
+  await program.parseAsync(argv);
 }

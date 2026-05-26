@@ -1,0 +1,379 @@
+{
+  "version": 1,
+  "description": "Hand-labeled seed corpus for the classifier kNN stage. Spans the four workflows and the cognitive-shape axes (deep reasoning, multi-file taste, huge context, adversarial, algorithmic, exploratory).",
+  "examples": [
+    {
+      "id": "trivial-typo-1",
+      "prompt": "Fix typo in README",
+      "taskType": "trivial",
+      "shape": { "deepReasoning": 0.0, "multiFileTaste": 0.0, "hugeContext": 0.0, "adversarial": 0.0, "algorithmic": 0.0, "exploratory": 0.0 },
+      "tags": ["instant"]
+    },
+    {
+      "id": "trivial-rename-1",
+      "prompt": "Rename the variable foo to userId across the file",
+      "taskType": "trivial",
+      "shape": { "deepReasoning": 0.0, "multiFileTaste": 0.3, "hugeContext": 0.0, "adversarial": 0.0, "algorithmic": 0.0, "exploratory": 0.0 }
+    },
+    {
+      "id": "trivial-format-1",
+      "prompt": "Format all files with biome",
+      "taskType": "trivial",
+      "shape": { "deepReasoning": 0.0, "multiFileTaste": 0.2, "hugeContext": 0.0, "adversarial": 0.0, "algorithmic": 0.0, "exploratory": 0.0 }
+    },
+    {
+      "id": "docs-readme-1",
+      "prompt": "Update the README with installation and quickstart sections",
+      "taskType": "docs",
+      "shape": { "deepReasoning": 0.2, "multiFileTaste": 0.3, "hugeContext": 0.1, "adversarial": 0.0, "algorithmic": 0.0, "exploratory": 0.3 }
+    },
+    {
+      "id": "docs-jsdoc-1",
+      "prompt": "Add JSDoc comments to all public functions in src/api/",
+      "taskType": "docs",
+      "shape": { "deepReasoning": 0.1, "multiFileTaste": 0.5, "hugeContext": 0.2, "adversarial": 0.0, "algorithmic": 0.0, "exploratory": 0.0 }
+    },
+    {
+      "id": "docs-commit-1",
+      "prompt": "Generate a commit message for the staged diff",
+      "taskType": "docs",
+      "shape": { "deepReasoning": 0.1, "multiFileTaste": 0.0, "hugeContext": 0.0, "adversarial": 0.0, "algorithmic": 0.0, "exploratory": 0.0 }
+    },
+    {
+      "id": "docs-changelog-1",
+      "prompt": "Write a changelog entry for the v2.3 release",
+      "taskType": "docs",
+      "shape": { "deepReasoning": 0.1, "multiFileTaste": 0.2, "hugeContext": 0.0, "adversarial": 0.0, "algorithmic": 0.0, "exploratory": 0.0 }
+    },
+    {
+      "id": "test-unit-1",
+      "prompt": "Add unit tests for the parseSearchQuery function covering edge cases",
+      "taskType": "test",
+      "shape": { "deepReasoning": 0.3, "multiFileTaste": 0.3, "hugeContext": 0.0, "adversarial": 0.6, "algorithmic": 0.2, "exploratory": 0.1 }
+    },
+    {
+      "id": "test-integration-1",
+      "prompt": "Write integration tests for the checkout flow including failure paths",
+      "taskType": "test",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.6, "hugeContext": 0.2, "adversarial": 0.7, "algorithmic": 0.1, "exploratory": 0.2 }
+    },
+    {
+      "id": "test-coverage-1",
+      "prompt": "Increase test coverage on the auth middleware including malformed tokens",
+      "taskType": "test",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.4, "hugeContext": 0.1, "adversarial": 0.8, "algorithmic": 0.1, "exploratory": 0.2 }
+    },
+    {
+      "id": "test-snapshot-1",
+      "prompt": "Add snapshot tests for the dashboard React components",
+      "taskType": "test",
+      "shape": { "deepReasoning": 0.2, "multiFileTaste": 0.6, "hugeContext": 0.1, "adversarial": 0.3, "algorithmic": 0.0, "exploratory": 0.2 }
+    },
+    {
+      "id": "investigation-stacktrace-1",
+      "prompt": "Debug this stack trace: TypeError: cannot read properties of undefined at processPayment line 84",
+      "taskType": "investigation",
+      "shape": { "deepReasoning": 0.85, "multiFileTaste": 0.5, "hugeContext": 0.3, "adversarial": 0.4, "algorithmic": 0.2, "exploratory": 0.5 }
+    },
+    {
+      "id": "investigation-flake-1",
+      "prompt": "Investigate why the websocket test is flaky under load",
+      "taskType": "investigation",
+      "shape": { "deepReasoning": 0.9, "multiFileTaste": 0.4, "hugeContext": 0.2, "adversarial": 0.6, "algorithmic": 0.3, "exploratory": 0.6 }
+    },
+    {
+      "id": "investigation-perf-1",
+      "prompt": "Find the root cause of the 5x perf regression on the orders endpoint",
+      "taskType": "investigation",
+      "shape": { "deepReasoning": 0.9, "multiFileTaste": 0.5, "hugeContext": 0.4, "adversarial": 0.4, "algorithmic": 0.6, "exploratory": 0.7 }
+    },
+    {
+      "id": "investigation-race-1",
+      "prompt": "Diagnose the suspected race condition in the bulk import job",
+      "taskType": "investigation",
+      "shape": { "deepReasoning": 0.95, "multiFileTaste": 0.4, "hugeContext": 0.3, "adversarial": 0.7, "algorithmic": 0.6, "exploratory": 0.4 }
+    },
+    {
+      "id": "review-pr-1",
+      "prompt": "Review the diff for risky patterns - second opinion before I merge",
+      "taskType": "review",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.6, "hugeContext": 0.4, "adversarial": 0.85, "algorithmic": 0.2, "exploratory": 0.2 }
+    },
+    {
+      "id": "review-security-1",
+      "prompt": "Audit the auth changes in the pending pull request for security issues",
+      "taskType": "review",
+      "shape": { "deepReasoning": 0.8, "multiFileTaste": 0.5, "hugeContext": 0.2, "adversarial": 0.95, "algorithmic": 0.2, "exploratory": 0.2 }
+    },
+    {
+      "id": "review-nitpick-1",
+      "prompt": "Nitpick the patch I just made for naming and edge cases",
+      "taskType": "review",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.5, "hugeContext": 0.1, "adversarial": 0.7, "algorithmic": 0.1, "exploratory": 0.1 }
+    },
+    {
+      "id": "refactor-extract-1",
+      "prompt": "Extract the payment retry logic into a reusable helper",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.7, "hugeContext": 0.1, "adversarial": 0.3, "algorithmic": 0.2, "exploratory": 0.3 }
+    },
+    {
+      "id": "refactor-split-1",
+      "prompt": "Split this 1200 line file into modules grouped by responsibility",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.9, "hugeContext": 0.5, "adversarial": 0.2, "algorithmic": 0.1, "exploratory": 0.4 }
+    },
+    {
+      "id": "refactor-migrate-1",
+      "prompt": "Migrate from moment to date-fns across the entire monorepo",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.9, "hugeContext": 0.9, "adversarial": 0.2, "algorithmic": 0.1, "exploratory": 0.3 }
+    },
+    {
+      "id": "refactor-restructure-1",
+      "prompt": "Restructure the API layer to follow a vertical slice architecture",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.8, "multiFileTaste": 0.95, "hugeContext": 0.5, "adversarial": 0.3, "algorithmic": 0.2, "exploratory": 0.6 }
+    },
+    {
+      "id": "refactor-dijkstra-1",
+      "prompt": "Optimize the Dijkstra implementation for sparse graphs with a Fibonacci heap",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.85, "multiFileTaste": 0.2, "hugeContext": 0.1, "adversarial": 0.3, "algorithmic": 0.95, "exploratory": 0.3 }
+    },
+    {
+      "id": "refactor-memoize-1",
+      "prompt": "Memoize the recursive solver to bring complexity to O(n log n)",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.2, "hugeContext": 0.0, "adversarial": 0.2, "algorithmic": 0.9, "exploratory": 0.2 }
+    },
+    {
+      "id": "bugfix-null-1",
+      "prompt": "Fix the bug where users.email is sometimes undefined after the migration",
+      "taskType": "bugfix",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.5, "hugeContext": 0.2, "adversarial": 0.5, "algorithmic": 0.1, "exploratory": 0.3 }
+    },
+    {
+      "id": "bugfix-crash-1",
+      "prompt": "Resolve the crash on file upload over 100MB",
+      "taskType": "bugfix",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.4, "hugeContext": 0.2, "adversarial": 0.7, "algorithmic": 0.3, "exploratory": 0.4 }
+    },
+    {
+      "id": "bugfix-edge-1",
+      "prompt": "Fix the broken edge case where pagination loops infinitely on empty result",
+      "taskType": "bugfix",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.3, "hugeContext": 0.0, "adversarial": 0.6, "algorithmic": 0.5, "exploratory": 0.2 }
+    },
+    {
+      "id": "bugfix-regression-1",
+      "prompt": "Fix the regression introduced by PR #2438 that broke admin login",
+      "taskType": "bugfix",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.6, "hugeContext": 0.4, "adversarial": 0.5, "algorithmic": 0.1, "exploratory": 0.6 }
+    },
+    {
+      "id": "feature-endpoint-1",
+      "prompt": "Implement the new POST /webhooks/stripe endpoint with idempotency",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.6, "hugeContext": 0.2, "adversarial": 0.5, "algorithmic": 0.2, "exploratory": 0.4 }
+    },
+    {
+      "id": "feature-component-1",
+      "prompt": "Add a SettingsPanel React component with theme toggle and language picker",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.3, "multiFileTaste": 0.7, "hugeContext": 0.1, "adversarial": 0.2, "algorithmic": 0.1, "exploratory": 0.5 }
+    },
+    {
+      "id": "feature-api-1",
+      "prompt": "Build a paginated REST API for the orders resource with filtering",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.7, "hugeContext": 0.2, "adversarial": 0.3, "algorithmic": 0.3, "exploratory": 0.5 }
+    },
+    {
+      "id": "feature-flow-1",
+      "prompt": "Introduce SSO via Google OAuth with email allowlist",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.8, "hugeContext": 0.3, "adversarial": 0.8, "algorithmic": 0.2, "exploratory": 0.6 }
+    },
+    {
+      "id": "feature-multistage-1",
+      "prompt": "Build a multi-step onboarding wizard with form state and validation",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.8, "hugeContext": 0.3, "adversarial": 0.3, "algorithmic": 0.2, "exploratory": 0.6 }
+    },
+    {
+      "id": "feature-realtime-1",
+      "prompt": "Add a real-time notification stream using server-sent events",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.7, "hugeContext": 0.3, "adversarial": 0.4, "algorithmic": 0.4, "exploratory": 0.5 }
+    },
+    {
+      "id": "feature-cli-1",
+      "prompt": "Add a new CLI subcommand `coderouter export` that writes runs to JSONL",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.6, "hugeContext": 0.1, "adversarial": 0.2, "algorithmic": 0.1, "exploratory": 0.4 }
+    },
+    {
+      "id": "architecture-1",
+      "prompt": "Design a plan to introduce caching at the data layer; discuss tradeoffs and pick an approach",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.95, "multiFileTaste": 0.6, "hugeContext": 0.3, "adversarial": 0.4, "algorithmic": 0.4, "exploratory": 0.9 }
+    },
+    {
+      "id": "architecture-2",
+      "prompt": "Architect a tenant isolation strategy for the multi-tenant SaaS migration",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.95, "multiFileTaste": 0.7, "hugeContext": 0.4, "adversarial": 0.8, "algorithmic": 0.3, "exploratory": 0.9 }
+    },
+    {
+      "id": "huge-context-1",
+      "prompt": "Sweep the whole repo and flag every place we still hand-roll JWT validation",
+      "taskType": "review",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.6, "hugeContext": 0.95, "adversarial": 0.8, "algorithmic": 0.1, "exploratory": 0.3 }
+    },
+    {
+      "id": "huge-context-2",
+      "prompt": "Find every consumer of the deprecated user.profile.address field across all packages",
+      "taskType": "investigation",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.7, "hugeContext": 0.95, "adversarial": 0.3, "algorithmic": 0.1, "exploratory": 0.4 }
+    },
+    {
+      "id": "huge-context-3",
+      "prompt": "Audit the codebase for unbounded allocations in critical hot paths",
+      "taskType": "review",
+      "shape": { "deepReasoning": 0.8, "multiFileTaste": 0.5, "hugeContext": 0.9, "adversarial": 0.7, "algorithmic": 0.5, "exploratory": 0.4 }
+    },
+    {
+      "id": "security-1",
+      "prompt": "Audit the new auth flow for XSS, CSRF, and injection vulnerabilities",
+      "taskType": "review",
+      "shape": { "deepReasoning": 0.85, "multiFileTaste": 0.6, "hugeContext": 0.2, "adversarial": 0.95, "algorithmic": 0.2, "exploratory": 0.3 }
+    },
+    {
+      "id": "security-2",
+      "prompt": "Sanitize user input in the search query parser to prevent SQL injection",
+      "taskType": "bugfix",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.3, "hugeContext": 0.0, "adversarial": 0.95, "algorithmic": 0.2, "exploratory": 0.2 }
+    },
+    {
+      "id": "security-3",
+      "prompt": "Harden the JWT verification middleware against algorithm confusion attacks",
+      "taskType": "bugfix",
+      "shape": { "deepReasoning": 0.85, "multiFileTaste": 0.3, "hugeContext": 0.1, "adversarial": 0.95, "algorithmic": 0.4, "exploratory": 0.3 }
+    },
+    {
+      "id": "algorithm-1",
+      "prompt": "Implement an LRU cache with O(1) get and put using a hashmap and doubly linked list",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.2, "hugeContext": 0.0, "adversarial": 0.3, "algorithmic": 0.95, "exploratory": 0.2 }
+    },
+    {
+      "id": "algorithm-2",
+      "prompt": "Optimize the Levenshtein distance with band-limited dynamic programming",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.8, "multiFileTaste": 0.1, "hugeContext": 0.0, "adversarial": 0.2, "algorithmic": 0.95, "exploratory": 0.2 }
+    },
+    {
+      "id": "algorithm-3",
+      "prompt": "Write a topological sort for the dependency graph that detects cycles",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.2, "hugeContext": 0.0, "adversarial": 0.4, "algorithmic": 0.9, "exploratory": 0.2 }
+    },
+    {
+      "id": "multi-file-1",
+      "prompt": "Touch the API, the React hook, the store slice, and the e2e test to add a delete button",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.9, "hugeContext": 0.3, "adversarial": 0.3, "algorithmic": 0.1, "exploratory": 0.4 }
+    },
+    {
+      "id": "multi-file-2",
+      "prompt": "Move the validation logic from controllers to a shared schema package and update every consumer",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.95, "hugeContext": 0.6, "adversarial": 0.3, "algorithmic": 0.1, "exploratory": 0.4 }
+    },
+    {
+      "id": "exploratory-1",
+      "prompt": "Prototype a draft of how we'd integrate Stripe Billing for usage-based pricing",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.6, "hugeContext": 0.3, "adversarial": 0.4, "algorithmic": 0.2, "exploratory": 0.95 }
+    },
+    {
+      "id": "exploratory-2",
+      "prompt": "Sketch a plan for migrating from Postgres to TigerBeetle for the ledger service",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.9, "multiFileTaste": 0.7, "hugeContext": 0.5, "adversarial": 0.5, "algorithmic": 0.5, "exploratory": 0.95 }
+    },
+    {
+      "id": "adversarial-1",
+      "prompt": "Write tests that probe the rate limiter under bursty load and malicious clients",
+      "taskType": "test",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.3, "hugeContext": 0.1, "adversarial": 0.95, "algorithmic": 0.5, "exploratory": 0.3 }
+    },
+    {
+      "id": "adversarial-2",
+      "prompt": "Find edge cases that break the URL parser - punycode, IDN homographs, percent encoding",
+      "taskType": "investigation",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.2, "hugeContext": 0.1, "adversarial": 0.95, "algorithmic": 0.4, "exploratory": 0.4 }
+    },
+    {
+      "id": "perf-1",
+      "prompt": "Profile and reduce the cold start time of the lambda below 200ms",
+      "taskType": "investigation",
+      "shape": { "deepReasoning": 0.8, "multiFileTaste": 0.5, "hugeContext": 0.3, "adversarial": 0.4, "algorithmic": 0.6, "exploratory": 0.6 }
+    },
+    {
+      "id": "perf-2",
+      "prompt": "Optimize the postgres queries on the dashboard page; add indexes if needed",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.7, "multiFileTaste": 0.4, "hugeContext": 0.3, "adversarial": 0.3, "algorithmic": 0.6, "exploratory": 0.5 }
+    },
+    {
+      "id": "docs-arch-1",
+      "prompt": "Write architecture docs describing the request lifecycle from edge to database",
+      "taskType": "docs",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.5, "hugeContext": 0.5, "adversarial": 0.1, "algorithmic": 0.0, "exploratory": 0.5 }
+    },
+    {
+      "id": "migration-1",
+      "prompt": "Migrate the test runner from Jest to Vitest; preserve coverage and update CI",
+      "taskType": "refactor",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.9, "hugeContext": 0.6, "adversarial": 0.3, "algorithmic": 0.1, "exploratory": 0.4 }
+    },
+    {
+      "id": "feature-rate-limit-1",
+      "prompt": "Add a token-bucket rate limiter with per-user and per-route caps",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.6, "hugeContext": 0.2, "adversarial": 0.6, "algorithmic": 0.6, "exploratory": 0.4 }
+    },
+    {
+      "id": "bugfix-memory-leak-1",
+      "prompt": "Find and fix the memory leak in the websocket reconnect logic",
+      "taskType": "bugfix",
+      "shape": { "deepReasoning": 0.8, "multiFileTaste": 0.4, "hugeContext": 0.3, "adversarial": 0.5, "algorithmic": 0.4, "exploratory": 0.5 }
+    },
+    {
+      "id": "feature-monitoring-1",
+      "prompt": "Wire Sentry, Datadog metrics, and structured logging across all services",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.5, "multiFileTaste": 0.95, "hugeContext": 0.7, "adversarial": 0.3, "algorithmic": 0.1, "exploratory": 0.4 }
+    },
+    {
+      "id": "test-property-1",
+      "prompt": "Add property-based tests for the JSON canonicalizer with fast-check",
+      "taskType": "test",
+      "shape": { "deepReasoning": 0.6, "multiFileTaste": 0.2, "hugeContext": 0.0, "adversarial": 0.9, "algorithmic": 0.4, "exploratory": 0.3 }
+    },
+    {
+      "id": "feature-cron-1",
+      "prompt": "Add a scheduled cron job that prunes expired sessions nightly",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.3, "multiFileTaste": 0.4, "hugeContext": 0.1, "adversarial": 0.3, "algorithmic": 0.2, "exploratory": 0.3 }
+    },
+    {
+      "id": "feature-localization-1",
+      "prompt": "Add i18n support and translations for English, Spanish, and Portuguese",
+      "taskType": "feature",
+      "shape": { "deepReasoning": 0.4, "multiFileTaste": 0.9, "hugeContext": 0.5, "adversarial": 0.2, "algorithmic": 0.1, "exploratory": 0.4 }
+    }
+  ]
+}

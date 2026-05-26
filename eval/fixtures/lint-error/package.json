@@ -1,0 +1,10 @@
+{
+  "name": "lint-error-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'src/index.ts:2:9 error no-unused-vars unused' && exit 1",
+    "test": "echo 'no tests' && exit 0"
+  }
+}

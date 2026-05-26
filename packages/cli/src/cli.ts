@@ -1,15 +1,7 @@
-/**
- * CodeRouter CLI entrypoint.
- * Wired in detail in the `cli` todo.
- */
+import { runCli } from './app.js';
 
-async function main(): Promise<void> {
-  const { runCli } = await import('./app.js');
-  await runCli(process.argv);
-}
-
-void main().catch((err: unknown) => {
+runCli(process.argv).catch((err: Error) => {
   // eslint-disable-next-line no-console
-  console.error(err);
+  console.error(err.stack ?? err.message);
   process.exit(1);
 });

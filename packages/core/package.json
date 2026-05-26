@@ -70,6 +70,18 @@
     "./perf": {
       "types": "./dist/perf/index.d.ts",
       "import": "./dist/perf/index.js"
+    },
+    "./transformers": {
+      "types": "./dist/transformers/index.d.ts",
+      "import": "./dist/transformers/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    },
+    "./workflows": {
+      "types": "./dist/workflows/index.d.ts",
+      "import": "./dist/workflows/index.js"
     }
   },
   "scripts": {
@@ -80,13 +92,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
     "gpt-tokenizer": "^2.8.1",
     "yaml": "^2.6.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.5",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
