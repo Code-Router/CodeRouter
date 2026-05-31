@@ -36,7 +36,7 @@ describe('ProviderRegistry', () => {
   it('handles models with commas in the name (e.g. openrouter/anthropic/...)', () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     const reg = new ProviderRegistry(defaultProviders());
-    const r = reg.resolve('openrouter,anthropic/claude-opus-4-1');
-    expect(r.model).toBe('anthropic/claude-opus-4-1');
+    const r = reg.resolve('openrouter,anthropic/claude-opus-4-5');
+    expect(r.model).toBe('anthropic/claude-opus-4-5');
   });
 });

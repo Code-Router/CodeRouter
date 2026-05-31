@@ -17,6 +17,7 @@ export * as perf from './perf/index.js';
 export * as transformers from './transformers/index.js';
 export * as providers from './providers/index.js';
 export * as workflows from './workflows/index.js';
+export * as catalog from './catalog/index.js';
 
 // Convenience top-level re-exports of the most commonly used symbols.
 // Mirrors what the CLI, MCP server, and eval harness import.
@@ -28,6 +29,7 @@ export type { Report } from './report/types.js';
 export type { Store } from './store/index.js';
 export type { Citation } from './types.js';
 export type { Classification, TaskType, Effort, Mode, RouteRef } from './types.js';
+export type { ActivityEvent } from './adapters/types.js';
 export {
   ClassifierCascade,
   loadSeedCorpus,
@@ -39,6 +41,9 @@ export { fastClassification } from './router/fast.js';
 export { effortProfile } from './router/effort.js';
 export { deriveMemoryBias } from './router/bias.js';
 export { ProviderRegistry, defaultProviders } from './providers/index.js';
+export { whichSync } from './sandbox/which.js';
+export { resolveIntent, lookupModel, CATALOG } from './catalog/index.js';
+export type { Intent, CatalogEntry } from './catalog/index.js';
 export { runValidators, summarize, detectProject } from './validate/index.js';
 export { scanContext } from './context/index.js';
 export { loadProjectMemory, projectMemoryToSystemPrompt } from './memory/index.js';
@@ -53,7 +58,24 @@ export {
 } from './handoff/index.js';
 export { runDualPlan } from './workflows/dualPlan.js';
 export { runTournament } from './workflows/tournament.js';
-export { buildReport, renderReportText, renderReportJson } from './report/index.js';
+export {
+  buildReport,
+  renderReportText,
+  renderReportFooterText,
+  renderReportJson,
+} from './report/index.js';
+export {
+  DEFAULT_RULES as DEFAULT_INJECTION_RULES,
+  scanText as scanForInjection,
+  summarizeScan as summarizeInjectionScan,
+  wrapUntrusted,
+} from './security/index.js';
+export type {
+  InjectionFinding,
+  InjectionRule,
+  InjectionScanResult,
+  InjectionSeverity,
+} from './security/index.js';
 export {
   buildCitations,
   renderReferences,

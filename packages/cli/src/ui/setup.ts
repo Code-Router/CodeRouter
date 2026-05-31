@@ -1,6 +1,12 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import {
+  HOST_DISABLE_ENV,
+  detectHosts,
+  type DetectedHost,
+  type HostProvider,
+} from './hosts.js';
 
 /**
  * The first-class providers we surface in the `/setup` wizard. Order
@@ -26,12 +32,23 @@ export const CREDENTIALS_PATH = join(homedir(), '.coderouter', 'credentials.json
 
 type CredentialsFile = {
   providers?: Record<string, { apiKey?: string }>;
+  /**
+   * Per-host enable/disable flags. Missing entries default to enabled
+   * so a fresh install that finds e.g. codex on PATH uses it without
+   * the user having to opt in.
+   */
+  hosts?: Partial<Record<HostProvider, { enabled?: boolean }>>;
 };
 
 /**
  * Hydrate process.env from the persisted credentials file. Safe to call
  * multiple times; existing env vars (e.g. set in the user's shell rc)
  * take precedence and are never overwritten.
+ *
+ * Also sets `CODEROUTER_DISABLE_<HOST>=1` for any host the user has
+ * turned off; the core `ProviderRegistry.isReady` checks that flag so
+ * a disabled host stops appearing as a routing candidate even though
+ * its binary is still on PATH.
  *
  * Returns the env vars that ended up populated by the loader so callers
  * can show a "loaded from credentials.json" hint.
@@ -51,6 +68,15 @@ export function loadCredentialsIntoEnv(): { applied: string[] } {
     if (key) {
       process.env[p.envVar] = key;
       applied.push(p.envVar);
+    }
+  }
+  for (const [host, cfg] of Object.entries(parsed.hosts ?? {})) {
+    const envName = HOST_DISABLE_ENV[host as HostProvider];
+    if (!envName) continue;
+    if (cfg?.enabled === false) {
+      process.env[envName] = '1';
+    } else {
+      delete process.env[envName];
     }
   }
   return { applied };
@@ -88,16 +114,101 @@ export function saveCredential(provider: SetupProvider, apiKey: string): void {
 }
 
 /**
- * "Configured" = at least one of the surfaced providers has its API
- * key env var populated. Local-only adapters (ollama / claude_code /
- * codex) are deliberately ignored here because they need their host
- * binary installed and we'd rather prompt for a key than silently
- * assume a local CLI works.
+ * Forget a previously-saved API key: remove it from credentials.json
+ * *and* unset its env var so the router stops routing to that provider
+ * immediately.
+ *
+ * Note: env vars set in the user's shell rc (outside CodeRouter) will
+ * still be present after this call - we can only manage what we own.
+ * The caller should surface this if `apiKey` came from the shell env
+ * rather than the credentials file.
  */
-export function detectConfiguredProviders(): { configured: boolean; ready: string[] } {
-  const ready: string[] = [];
-  for (const p of SETUP_PROVIDERS) {
-    if (process.env[p.envVar]) ready.push(p.name);
+export function removeCredential(provider: SetupProvider): { wasInShellEnv: boolean } {
+  let existing: CredentialsFile = {};
+  try {
+    const raw = readFileSync(CREDENTIALS_PATH, 'utf8');
+    existing = JSON.parse(raw) as CredentialsFile;
+  } catch {
+    // no credentials file - nothing to remove from disk, but we may
+    // still need to drop the env var
   }
-  return { configured: ready.length > 0, ready };
+  const persistedKey = existing.providers?.[provider.name]?.apiKey;
+  if (existing.providers) {
+    delete existing.providers[provider.name];
+    mkdirSync(dirname(CREDENTIALS_PATH), { recursive: true });
+    writeFileSync(CREDENTIALS_PATH, `${JSON.stringify(existing, null, 2)}\n`, { encoding: 'utf8' });
+    try {
+      chmodSync(CREDENTIALS_PATH, 0o600);
+    } catch {
+      // permissions are best-effort
+    }
+  }
+
+  const currentEnv = process.env[provider.envVar];
+  const wasInShellEnv = Boolean(currentEnv && currentEnv !== persistedKey);
+  if (!wasInShellEnv) {
+    delete process.env[provider.envVar];
+  }
+  return { wasInShellEnv };
+}
+
+/**
+ * Persist a host's enabled flag to credentials.json and mirror it on
+ * `process.env.CODEROUTER_DISABLE_<HOST>` so the change takes effect
+ * immediately without a REPL restart.
+ */
+export function setHostEnabled(provider: HostProvider, enabled: boolean): void {
+  let existing: CredentialsFile = {};
+  try {
+    const raw = readFileSync(CREDENTIALS_PATH, 'utf8');
+    existing = JSON.parse(raw) as CredentialsFile;
+  } catch {
+    // file doesn't exist or is malformed - rewrite from scratch
+  }
+  existing.hosts ??= {};
+  existing.hosts[provider] = { enabled };
+
+  mkdirSync(dirname(CREDENTIALS_PATH), { recursive: true });
+  writeFileSync(CREDENTIALS_PATH, `${JSON.stringify(existing, null, 2)}\n`, { encoding: 'utf8' });
+  try {
+    chmodSync(CREDENTIALS_PATH, 0o600);
+  } catch {
+    // permissions are best-effort (e.g. on Windows)
+  }
+  const envName = HOST_DISABLE_ENV[provider];
+  if (enabled) delete process.env[envName];
+  else process.env[envName] = '1';
+}
+
+/**
+ * What we know about the user's current provider setup at REPL
+ * startup.
+ *
+ * - `apiKeys` -> API providers whose env var (or persisted credential)
+ *   resolved to a populated `process.env[...]`.
+ * - `hosts`   -> local CLIs (codex / claude / ollama) actually on PATH.
+ * - `configured` -> true when *either* source has at least one entry;
+ *   that's the bar for "we can route a prompt without help".
+ */
+export type DetectedSetup = {
+  configured: boolean;
+  apiKeys: string[];
+  hosts: DetectedHost[];
+};
+
+export function detectConfiguredProviders(): DetectedSetup {
+  const apiKeys: string[] = [];
+  for (const p of SETUP_PROVIDERS) {
+    if (process.env[p.envVar]) apiKeys.push(p.name);
+  }
+  const hosts = detectHosts();
+  // Only *enabled* hosts count toward "configured" - if the user has
+  // disabled every host and has no API keys, we still want the setup
+  // wizard to fire on next launch.
+  const enabledHostCount = hosts.filter((h) => h.enabled).length;
+  return {
+    configured: apiKeys.length + enabledHostCount > 0,
+    apiKeys,
+    hosts,
+  };
 }

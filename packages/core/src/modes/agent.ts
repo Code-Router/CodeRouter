@@ -12,7 +12,9 @@ import {
   destroyWorktree,
   diffWorktree,
   mergeWorktree,
+  persistRunArtifact,
 } from '../sandbox/worktree.js';
+import { scanText as scanForInjection } from '../security/injection.js';
 import { runValidators, summarize } from '../validate/run.js';
 import type { Adapter } from '../adapters/types.js';
 import type { RouteRef } from '../types.js';
@@ -40,6 +42,38 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   progress({ phase: 'agent/instant', stage: 'start' });
   const instant = matchInstant(input.prompt);
   progress({ phase: 'agent/instant', stage: 'done' });
+
+  // Prompt-injection scan. We run this before any classifier or
+  // adapter call so a `block` policy can abort the run without
+  // burning tokens or spinning up a worktree. Findings always flow
+  // through to the report regardless of policy so the operator can
+  // see them.
+  progress({ phase: 'agent/security', stage: 'start' });
+  const securityFindings = scanForInjection(input.prompt, { source: 'user-prompt' }).findings;
+  progress({
+    phase: 'agent/security',
+    stage: 'done',
+    data: { findings: securityFindings.length },
+  });
+  const policy = input.injectionPolicy ?? 'warn';
+  const hasHighRisk = securityFindings.some((f) => f.severity === 'high');
+  if (policy === 'block' && hasHighRisk) {
+    return {
+      mode: 'agent',
+      status: 'failed',
+      runId,
+      classification: undefined,
+      contextManifest: { entries: [], totalTokens: 0, budget: 0, truncated: false },
+      routes: [],
+      validators: [],
+      costUsd: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      durationMs: performance.now() - start,
+      rationale: 'blocked: prompt-injection policy=block and high-severity finding present',
+      securityFindings,
+    };
+  }
 
   const corpus = await loadSeedCorpus();
   const classifier = new ClassifierCascade({ corpus });
@@ -77,16 +111,47 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       cwd: wt.path,
       reasoningEffort: profile.reasoningEffort,
       contextManifest: manifest,
+      signal: input.signal,
+      onChunk: input.onChunk,
+      onActivity: input.onActivity,
     });
   } catch (err) {
     await destroyWorktree(wt).catch(() => {});
+    // Surface cancellation as a structured outcome instead of letting
+    // the AbortError propagate as a generic failure.
+    if (input.signal?.aborted) {
+      return {
+        mode: 'agent',
+        status: 'aborted',
+        runId,
+        classification,
+        contextManifest: manifest,
+        routes: [route],
+        validators: [],
+        costUsd: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        durationMs: performance.now() - start,
+        rationale: `${route.rationale} (aborted)`,
+        securityFindings,
+      };
+    }
     throw err;
   }
   progress({ phase: 'agent/run', stage: 'done' });
 
+  // Compute the diff once, up front: it gates whether validators
+  // (and therefore handoff) make sense at all. If the model didn't
+  // touch any files we're answering a question, not making a change,
+  // and running `pnpm lint` / `tsc` / `vitest` against an unchanged
+  // worktree is at best wasted time and at worst noise that drowns
+  // the actual answer.
+  const files = await changedFiles(wt).catch(() => []);
+  const diff = await diffWorktree(wt).catch(() => '');
+
   let validators: import('../types.js').ValidatorResult[] = [];
   let handoffPasses = 0;
-  if (!input.fast) {
+  if (!input.fast && files.length > 0) {
     progress({ phase: 'agent/validate', stage: 'start' });
     validators = await runValidators({ cwd: wt.path });
     progress({ phase: 'agent/validate', stage: 'done' });
@@ -112,13 +177,37 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       handoffPasses = handoff.passes.length;
       progress({ phase: 'agent/handoff', stage: 'done', data: { passes: handoffPasses } });
     }
+  } else if (!input.fast) {
+    // Skipped explicitly so the progress phase still emits a "done"
+    // beat; otherwise the spinner gets stuck on "run · done" for the
+    // remainder of the pipeline.
+    progress({ phase: 'agent/validate', stage: 'done', data: { skipped: 'no-file-changes' } });
   }
 
-  const diff = await diffWorktree(wt).catch(() => '');
-  const files = await changedFiles(wt).catch(() => []);
+  // Always persist the diff to a stable, recoverable location BEFORE
+  // we destroy the worktree. Without this the user has no way to
+  // recover the changes they just watched the model "make" - the
+  // worktree lives in /tmp and gets nuked on apply=off, which is the
+  // exact pattern that produced the "claimed to create the file but
+  // it doesn't exist" confusion.
+  let artifactDir: string | undefined;
+  if (files.length > 0) {
+    const artifact = await persistRunArtifact(wt, { diff, files });
+    if (artifact) artifactDir = artifact.dir;
+  }
 
+  let applied = false;
   if (input.apply) {
-    await mergeWorktree(wt).catch(() => {});
+    if (files.length > 0) {
+      try {
+        await mergeWorktree(wt);
+        applied = true;
+      } catch {
+        applied = false;
+      }
+    } else {
+      await destroyWorktree(wt).catch(() => {});
+    }
   } else {
     await destroyWorktree(wt).catch(() => {});
   }
@@ -141,6 +230,9 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
     tokensOut: res.tokensOut,
     durationMs: performance.now() - start,
     rationale: `${route.rationale}${handoffPasses ? ` + ${handoffPasses} handoff pass(es)` : ''}`,
+    securityFindings,
+    applied,
+    artifactDir,
   };
 }
 

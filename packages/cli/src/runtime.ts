@@ -9,6 +9,7 @@ import {
   runMode,
 } from '@coderouter/core';
 import type {
+  ActivityEvent,
   Effort,
   Mode,
   ModeOutput,
@@ -41,6 +42,32 @@ export type CliRunOpts = {
    * here so progress doesn't fight Ink's renderer.
    */
   progress?: ProgressAdapter;
+  /**
+   * Cancellation handle. The REPL wires esc-to-interrupt to this; the
+   * non-interactive `coderouter run` doesn't bother (a SIGINT just
+   * tears down the whole process).
+   */
+  signal?: AbortSignal;
+  /**
+   * Optional streaming sink: every output chunk that the underlying
+   * adapter emits is forwarded here. The REPL renders this live above
+   * the input box so the user sees the model's answer as it lands
+   * instead of waiting for the whole run to finish.
+   */
+  onChunk?: (chunk: string) => void;
+  /**
+   * Optional activity sink: structured tool_use / tool_result /
+   * thinking events for adapters that have visibility into the
+   * underlying agent loop (Claude Code, Codex). Used by the REPL
+   * to render a live action feed alongside the streamed answer.
+   */
+  onActivity?: (event: ActivityEvent) => void;
+  /**
+   * Prompt-injection enforcement policy. Defaults to 'warn' (record
+   * findings but run anyway). Set to 'block' to refuse runs whose
+   * prompts trigger any high-severity rule.
+   */
+  injectionPolicy?: 'warn' | 'block';
 };
 
 /**
@@ -72,6 +99,10 @@ export async function executeRun(opts: CliRunOpts): Promise<{
         apply: opts.apply,
         route: opts.route,
         progress: notifier,
+        signal: opts.signal,
+        onChunk: opts.onChunk,
+        onActivity: opts.onActivity,
+        injectionPolicy: opts.injectionPolicy,
       },
       {
         registry,

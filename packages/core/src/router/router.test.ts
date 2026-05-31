@@ -10,6 +10,10 @@ function envSetup() {
   process.env.ANTHROPIC_API_KEY = 'sk-test';
   process.env.GOOGLE_API_KEY = 'sk-test';
   process.env.DEEPSEEK_API_KEY = 'sk-test';
+  // Force "no local CLIs" so routing decisions in these tests are
+  // deterministic regardless of whether codex / claude / ollama are on
+  // the developer's machine. `whichSync` reads PATH at call time.
+  process.env.PATH = '';
 }
 
 function classification(
@@ -81,7 +85,7 @@ describe('pick()', () => {
     expect(r.model).toBe('gemini-2.5-pro');
   });
 
-  it('routes deepReasoning shape to GPT-5 reasoning at high effort', () => {
+  it('routes deepReasoning shape to GPT-5 at high effort', () => {
     envSetup();
     const ctx = { registry: new ProviderRegistry(defaultProviders()) };
     const r = pick(
@@ -99,7 +103,9 @@ describe('pick()', () => {
       ctx,
       { effort: 'high' },
     );
-    expect(r.model).toBe('gpt-5-reasoning');
+    // GPT-5 is itself a reasoning model; the effort knob is the
+    // `reasoning_effort` request param, not a separate model name.
+    expect(r.model).toBe('gpt-5');
   });
 
   it('routes multiFileTaste shape to Opus', () => {
@@ -119,7 +125,7 @@ describe('pick()', () => {
       }),
       ctx,
     );
-    expect(r.model).toBe('claude-opus-4-1');
+    expect(r.model).toBe('claude-opus-4-5');
   });
 
   it('honors a route override', () => {
@@ -142,7 +148,7 @@ describe('pick()', () => {
     const ctx = {
       registry: new ProviderRegistry(defaultProviders()),
       memoryBias: {
-        forbiddenRoutes: ['anthropic,claude-opus-4-1'],
+        forbiddenRoutes: ['anthropic,claude-opus-4-5'],
       },
     };
     const r = pick(
@@ -159,7 +165,7 @@ describe('pick()', () => {
       }),
       ctx,
     );
-    expect(r.model).not.toBe('claude-opus-4-1');
+    expect(r.model).not.toBe('claude-opus-4-5');
   });
 });
 
@@ -185,6 +191,6 @@ describe('pickStrong()', () => {
     expect(top.length).toBeGreaterThanOrEqual(2);
     expect(top.length).toBeLessThanOrEqual(3);
     const models = top.map((r) => r.model);
-    expect(models).toContain('gpt-5-reasoning');
+    expect(models).toContain('gpt-5');
   });
 });

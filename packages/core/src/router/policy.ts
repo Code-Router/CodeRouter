@@ -1,3 +1,5 @@
+import { resolveIntent } from '../catalog/resolve.js';
+import type { Intent } from '../catalog/types.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { Classification, CognitiveShape, Effort, RouteRef } from '../types.js';
 import { effortProfile } from './effort.js';
@@ -96,35 +98,38 @@ export function pick(
     if (cheap) return { ...cheap, rationale: `cheap-task:${taskType}` };
   }
 
+  // 5a) Shape-driven routing: ask the catalog to satisfy an intent.
+  //     The catalog handles "which concrete model" + "which configured
+  //     provider"; the router just picks the intent. Local host CLIs
+  //     (codex / claude_code / ollama) win ties because they sit at
+  //     the top of the catalog by convention.
+  const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
+  const tryIntent = (intent: Intent, rationale: string): RouteRef | null => {
+    const ref = resolveIntent(intent, ctx.registry, { forbidRoutes });
+    return ref ? { ...ref, rationale } : null;
+  };
+
   if (shape.hugeContext > 0.7) {
-    const r = preferProvider(ctx, ['google'], 'gemini-2.5-pro');
-    if (r) return { ...r, rationale: `shape:hugeContext=${shape.hugeContext.toFixed(2)}` };
+    const r = tryIntent('huge-context', `shape:hugeContext=${shape.hugeContext.toFixed(2)}`);
+    if (r) return r;
   }
   if (shape.multiFileTaste > 0.75) {
-    const r = preferProvider(ctx, ['anthropic', 'claude_code'], 'claude-opus-4-1');
-    if (r) return { ...r, rationale: `shape:multiFileTaste=${shape.multiFileTaste.toFixed(2)}` };
+    const r = tryIntent('multi-file', `shape:multiFileTaste=${shape.multiFileTaste.toFixed(2)}`);
+    if (r) return r;
   }
   if (SHAPES_NEED_REASONING.some((k) => shape[k] >= 0.7) && profile.reasoningEffort !== 'minimal') {
-    const r = preferProvider(ctx, ['openai'], 'gpt-5-reasoning') ?? preferProvider(ctx, ['deepseek'], 'deepseek-reasoner');
-    if (r) {
-      return {
-        ...r,
-        rationale: `shape:deepReasoning=${shape.deepReasoning.toFixed(2)}, effort=${effort}`,
-      };
-    }
+    const r = tryIntent(
+      'deep-reasoning',
+      `shape:deepReasoning=${shape.deepReasoning.toFixed(2)}, effort=${effort}`,
+    );
+    if (r) return r;
   }
 
-  // 6) Default route: balanced agent.
-  const def =
-    preferProvider(ctx, ['claude_code'], 'sonnet') ??
-    preferProvider(ctx, ['anthropic'], 'claude-sonnet-4-5') ??
-    preferProvider(ctx, ['openai'], 'gpt-5') ??
-    preferProvider(ctx, ['openai'], 'gpt-4o') ??
-    preferProvider(ctx, ['openrouter'], 'anthropic/claude-sonnet-4-5') ??
-    preferProvider(ctx, ['deepseek'], 'deepseek-chat') ??
-    preferProvider(ctx, ['groq'], 'llama-3.3-70b-versatile') ??
-    preferProvider(ctx, ['google'], 'gemini-2.5-pro');
-  if (def) return { ...def, rationale: `default:agent (taskType=${taskType})` };
+  // 6) Default route: balanced agent. The catalog has the local CLIs
+  //    (codex / claude_code) tagged as balanced-agent contenders, so
+  //    we'll prefer those over native APIs automatically.
+  const def = tryIntent('balanced-agent', `default:agent (taskType=${taskType})`);
+  if (def) return def;
 
   // 7) Last resort: the first ready provider in the registry.
   for (const p of ctx.registry.list()) {
@@ -156,25 +161,28 @@ export function pickStrong(
 ): RouteRef[] {
   const profile = effortProfile(effort);
   const { shape } = classification;
+  const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
   const out: RouteRef[] = [];
+  const pushIntent = (intent: Intent, rationale: string): void => {
+    const r = resolveIntent(intent, ctx.registry, { forbidRoutes });
+    if (r) out.push({ ...r, rationale });
+  };
 
+  // For tournaments we want a *deliberately diverse* set of strong
+  // contenders, one per intent the shape triggers, plus a balanced
+  // fallback so we always have at least one route.
   if (shape.deepReasoning >= 0.5 || shape.algorithmic >= 0.5 || shape.adversarial >= 0.7) {
-    const r = preferProvider(ctx, ['openai'], 'gpt-5-reasoning');
-    if (r) out.push({ ...r, rationale: 'strong:gpt-5-reasoning (deep)' });
+    pushIntent('deep-reasoning', 'strong: deep-reasoning');
   }
   if (shape.multiFileTaste >= 0.5) {
-    const r = preferProvider(ctx, ['anthropic'], 'claude-opus-4-1');
-    if (r) out.push({ ...r, rationale: 'strong:claude-opus-4-1 (multi-file)' });
+    pushIntent('multi-file', 'strong: multi-file');
   }
   if (shape.hugeContext >= 0.4) {
-    const r = preferProvider(ctx, ['google'], 'gemini-2.5-pro');
-    if (r) out.push({ ...r, rationale: 'strong:gemini-2.5-pro (long context)' });
+    pushIntent('huge-context', 'strong: huge-context');
   }
-  // Always include a balanced contender.
-  const balanced = preferProvider(ctx, ['anthropic'], 'claude-sonnet-4-5');
-  if (balanced) out.push({ ...balanced, rationale: 'strong:claude-sonnet-4-5 (balanced)' });
+  pushIntent('balanced-agent', 'strong: balanced');
 
-  // De-dupe by (provider, model) and trim to tournamentSize.
+  // De-dupe by (via, model) so we don't pit a model against itself.
   const seen = new Set<string>();
   const uniq = out.filter((r) => {
     const k = `${r.via ?? r.provider},${r.model}`;
@@ -184,6 +192,7 @@ export function pickStrong(
   });
   return uniq.slice(0, Math.max(1, profile.tournamentSize));
 }
+
 
 function preferProvider(
   ctx: RouterContext,
@@ -214,22 +223,14 @@ function pickByHint(
   hint: 'cheap' | 'haiku' | 'local',
   ctx: RouterContext,
 ): RouteRef | null {
+  const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
   if (hint === 'local') {
-    const r = preferProvider(ctx, ['ollama'], 'qwen2.5-coder:7b') ?? preferProvider(ctx, ['ollama'], 'llama3.2');
-    if (r) return r;
+    return resolveIntent('local-offline', ctx.registry, { forbidRoutes });
   }
-  if (hint === 'haiku' || hint === 'cheap') {
-    const r =
-      preferProvider(ctx, ['anthropic'], 'claude-3-5-haiku-latest') ??
-      preferProvider(ctx, ['openai'], 'gpt-4o-mini') ??
-      preferProvider(ctx, ['deepseek'], 'deepseek-chat');
-    if (r) return r;
-  }
-  if (hint === 'cheap') {
-    const r = preferProvider(ctx, ['ollama'], 'qwen2.5-coder:7b') ?? preferProvider(ctx, ['ollama'], 'llama3.2');
-    if (r) return r;
-  }
-  return null;
+  // 'haiku' and 'cheap' both resolve to fast-cheap; the haiku-specific
+  // bias used to live in the explicit fallback order and now lives in
+  // the catalog (Haiku is fast-cheap@rank2).
+  return resolveIntent('fast-cheap', ctx.registry, { forbidRoutes });
 }
 
 function parseRouteRef(route: string): RouteRef | null {

@@ -6,6 +6,7 @@ import { OllamaAdapter } from '../adapters/ollama.js';
 import { OpenAIAdapter } from '../adapters/openai.js';
 import { OpenAICompatAdapter } from '../adapters/openaiCompat.js';
 import type { Adapter } from '../adapters/types.js';
+import { whichSync } from '../sandbox/which.js';
 import { applyTransformers } from '../transformers/index.js';
 import type { ProviderConfig, ProviderModelConfig } from './types.js';
 
@@ -42,21 +43,38 @@ export class ProviderRegistry {
     return [...this.providers.values()];
   }
 
+  has(name: string): boolean {
+    return this.providers.has(name);
+  }
+
   /**
-   * Returns true when the provider can actually make a call: it either
-   * has a literal `apiKey`, an `apiKeyEnv` whose env var is set, or it's
-   * a local-only adapter (ollama / codex / claude_code) that delegates
-   * to a host binary instead of an HTTP API.
+   * Returns true when the provider can actually make a call.
    *
-   * The router uses this to filter shape-based candidates so we don't
-   * route to e.g. Google when GOOGLE_API_KEY isn't set just because the
-   * default registry knows about Gemini.
+   * - HTTP-API providers need a literal `apiKey` or an `apiKeyEnv` env
+   *   var that's populated.
+   * - Local-CLI providers (codex / claude_code / ollama) need the host
+   *   binary on PATH. We probe with a sync PATH lookup so the router
+   *   can filter unusable candidates without async work.
+   *
+   * Doesn't verify CLI auth state (e.g. `codex auth status`) - that's
+   * one extra subprocess per startup we don't pay for here. If the bin
+   * exists but isn't logged in the adapter will surface that at run
+   * time.
    */
   isReady(name: string): boolean {
     const provider = this.providers.get(name);
     if (!provider) return false;
-    if (provider.adapter === 'ollama' || provider.adapter === 'codex' || provider.adapter === 'claude_code') {
-      return true;
+    if (provider.adapter === 'codex') {
+      if (process.env.CODEROUTER_DISABLE_CODEX === '1') return false;
+      return whichSync('codex') !== null;
+    }
+    if (provider.adapter === 'claude_code') {
+      if (process.env.CODEROUTER_DISABLE_CLAUDE_CODE === '1') return false;
+      return whichSync('claude') !== null;
+    }
+    if (provider.adapter === 'ollama') {
+      if (process.env.CODEROUTER_DISABLE_OLLAMA === '1') return false;
+      return whichSync('ollama') !== null;
     }
     if (provider.apiKey) return true;
     if (provider.apiKeyEnv && process.env[provider.apiKeyEnv]) return true;
@@ -168,13 +186,29 @@ export function defaultProviders(): ProviderConfig[] {
       adapter: 'openai',
       apiKeyEnv: 'OPENAI_API_KEY',
       transformer: ['maxTokens', 'reasoning', 'tooluse', 'streaming'],
+      // OpenAI does not ship a separate "-reasoning" model; the
+      // reasoning behaviour is selected via the `reasoning_effort`
+      // request parameter (see `reasoningParam` on each entry).
       models: {
-        'gpt-5': { contextWindow: 400_000 },
-        'gpt-5-reasoning': { contextWindow: 400_000, transformer: ['reasoning'] },
+        'gpt-5.5': {
+          contextWindow: 400_000,
+          reasoningParam: 'reasoning_effort',
+          capabilities: { reasoning: true },
+        },
+        'gpt-5.5-pro': {
+          contextWindow: 400_000,
+          reasoningParam: 'reasoning_effort',
+          capabilities: { reasoning: true },
+        },
+        'gpt-5': {
+          contextWindow: 400_000,
+          reasoningParam: 'reasoning_effort',
+          capabilities: { reasoning: true },
+        },
         'gpt-5-mini': { contextWindow: 400_000 },
+        'gpt-4.1': { contextWindow: 1_000_000 },
         'gpt-4o': { contextWindow: 128_000 },
         'gpt-4o-mini': { contextWindow: 128_000 },
-        'o4-mini': { contextWindow: 200_000, transformer: ['reasoning'] },
       },
     },
     {
@@ -183,7 +217,7 @@ export function defaultProviders(): ProviderConfig[] {
       apiKeyEnv: 'ANTHROPIC_API_KEY',
       transformer: ['maxTokens', 'tooluse', 'streaming'],
       models: {
-        'claude-opus-4-1': { contextWindow: 200_000 },
+        'claude-opus-4-5': { contextWindow: 200_000 },
         'claude-sonnet-4-5': { contextWindow: 200_000 },
         'claude-3-5-haiku-latest': { contextWindow: 200_000 },
       },
@@ -226,7 +260,7 @@ export function defaultProviders(): ProviderConfig[] {
       apiKeyEnv: 'OPENROUTER_API_KEY',
       transformer: ['maxTokens', 'tooluse', 'streaming'],
       models: {
-        'anthropic/claude-opus-4-1': {
+        'anthropic/claude-opus-4-5': {
           pricePer1MIn: 15,
           pricePer1MOut: 75,
           contextWindow: 200_000,
@@ -235,6 +269,13 @@ export function defaultProviders(): ProviderConfig[] {
           pricePer1MIn: 3,
           pricePer1MOut: 15,
           contextWindow: 200_000,
+        },
+        'openai/gpt-5': {
+          pricePer1MIn: 5,
+          pricePer1MOut: 15,
+          contextWindow: 400_000,
+          reasoningParam: 'reasoning_effort',
+          capabilities: { reasoning: true },
         },
         'google/gemini-2.5-pro': {
           pricePer1MIn: 1.25,

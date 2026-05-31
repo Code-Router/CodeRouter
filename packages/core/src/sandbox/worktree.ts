@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CommandError, exec, git, gitOrThrow } from './exec.js';
@@ -237,6 +237,67 @@ export async function listWorktrees(
     });
   }
   return out;
+}
+
+export type RunArtifact = {
+  /** Absolute path of the on-disk artifact directory. */
+  dir: string;
+  /** Absolute path of the unified diff (`changes.patch`). */
+  patchPath: string;
+  /** Files touched by the run (paths relative to the repo root). */
+  files: string[];
+};
+
+/**
+ * Persist the diff + a small manifest to `<repo>/.coderouter/runs/<runId>/`
+ * so the worktree is recoverable even after we destroy it. Used by
+ * runs that produce changes the user may want to keep without having
+ * `--apply` enabled - they can `git apply` the patch later.
+ *
+ * Best-effort: returns null if the diff is empty or persistence
+ * fails (we never want artifact persistence to fail the run itself).
+ */
+export async function persistRunArtifact(
+  wt: Worktree,
+  opts: { diff: string; files: string[] },
+): Promise<RunArtifact | null> {
+  if (!opts.diff || opts.diff.trim().length === 0) return null;
+  if (opts.files.length === 0) return null;
+  try {
+    const dir = join(wt.repoPath, '.coderouter', 'runs', wt.runId);
+    await mkdir(dir, { recursive: true });
+    const patchPath = join(dir, 'changes.patch');
+    await writeFile(patchPath, opts.diff, 'utf8');
+    await writeFile(
+      join(dir, 'manifest.json'),
+      JSON.stringify(
+        {
+          runId: wt.runId,
+          branch: wt.branch,
+          baseSha: wt.baseSha,
+          createdAt: wt.createdAt,
+          completedAt: Date.now(),
+          files: opts.files,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    return { dir, patchPath, files: opts.files };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run `git worktree prune` to clear out stale worktree refs left over
+ * from previous sessions that crashed or were SIGKILL'd before
+ * `destroyWorktree` could run. Cheap and idempotent; safe to call on
+ * REPL launch.
+ */
+export async function pruneStaleWorktrees(repoPath: string): Promise<void> {
+  await git(['worktree', 'prune'], { cwd: repoPath });
 }
 
 /**

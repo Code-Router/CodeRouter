@@ -1,7 +1,8 @@
-import type { Adapter } from '../adapters/types.js';
+import type { ActivityEvent, Adapter } from '../adapters/types.js';
 import type { Clarification } from '../clarify/types.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { RouterContext } from '../router/policy.js';
+import type { InjectionFinding } from '../security/injection.js';
 import type { Store } from '../store/index.js';
 import type {
   Citation,
@@ -33,6 +34,41 @@ export type ModeInput = {
   route?: string;
   /** Optional MCP-shaped notifier. */
   progress?: ProgressNotifier;
+  /**
+   * Cancellation handle. When aborted, in-flight adapter calls bail
+   * out and the mode returns `status: 'aborted'`. The REPL wires its
+   * esc-to-interrupt key to this.
+   */
+  signal?: AbortSignal;
+  /**
+   * Optional streaming sink: every chunk the underlying adapter emits
+   * is forwarded here so the REPL can render the response live.
+   * Adapters that don't stream just call this once at the end with
+   * the full response (or not at all - the report layer still has
+   * the final text).
+   */
+  onChunk?: (chunk: string) => void;
+  /**
+   * Optional structured-action sink: every observable tool call /
+   * tool result / reasoning summary the adapter can see is
+   * forwarded here so the REPL can render a live activity feed.
+   * Adapters that don't expose tool-level visibility simply never
+   * fire this callback.
+   */
+  onActivity?: (event: ActivityEvent) => void;
+  /**
+   * What to do when prompt-injection scanning surfaces a `high`
+   * severity finding:
+   *   - `'warn'` (default): record findings on the output and run
+   *     the adapter anyway. The user sees the warning in the report.
+   *   - `'block'`: refuse to invoke the adapter; return early with
+   *     `status: 'failed'` and the findings attached so the caller
+   *     can show them to the operator.
+   *
+   * Lower severity findings (`info`, `warn`) never block regardless
+   * of policy.
+   */
+  injectionPolicy?: 'warn' | 'block';
 };
 
 export type ModeOutput = {
@@ -57,6 +93,27 @@ export type ModeOutput = {
   tokensOut: number;
   durationMs: number;
   rationale: string;
+  /**
+   * Prompt-injection findings flagged during the run. Populated by
+   * the mode pipeline before the adapter is invoked. An empty list
+   * means the scan ran but came up clean; `undefined` means the
+   * scanner wasn't run at all (e.g. `--fast`).
+   */
+  securityFindings?: InjectionFinding[];
+  /**
+   * True when the worktree was merged back into the host repo
+   * (i.e. `apply` was on AND there were changes). False means the
+   * changes either landed only in `artifactDir` (recoverable) or
+   * the run produced no changes.
+   */
+  applied?: boolean;
+  /**
+   * Filesystem path under `<repo>/.coderouter/runs/<runId>/` where
+   * the diff + a small manifest were persisted before the worktree
+   * was destroyed. Set when there were changes to keep around for
+   * later inspection / manual `git apply`.
+   */
+  artifactDir?: string;
 };
 
 export type ModeContext = {
