@@ -30,5 +30,8 @@ export function buildReport(prompt: string, out: ModeOutput): Report {
     securityFindings: out.securityFindings,
     applied: out.applied,
     artifactDir: out.artifactDir,
+    validatorsSkippedReason: out.validatorsSkippedReason,
+    sessionId: out.sessionId,
+    sessionProvider: out.sessionProvider,
   };
 }

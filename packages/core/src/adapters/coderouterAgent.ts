@@ -1,0 +1,135 @@
+/**
+ * `CodeRouterAgentAdapter` - the first-party coding agent for any
+ * tool-calling-capable chat/completions backend.
+ *
+ * Where Claude Code and Codex run their own loop inside a child
+ * binary that we just shell out to, this adapter runs the loop
+ * here in-process. That gives users with only an API key
+ * (OpenRouter most commonly, but also raw OpenAI / Groq /
+ * DeepSeek) an editing agent without depending on a local CLI.
+ *
+ * Design: thin wrapper. All real work lives in `core/agent/*`.
+ * This file's job is to map between the adapter contract and the
+ * agent module's contract; nothing else.
+ */
+
+import {
+  OpenAICompatTransport,
+  defaultTools,
+  runAgent,
+  type Tool,
+} from '../agent/index.js';
+import type { AdapterCapabilities, ProviderId } from '../types.js';
+import { BaseAdapter } from './base.js';
+import type { AdapterCallInput, AdapterCallResult } from './types.js';
+
+export type CodeRouterAgentAdapterOptions = {
+  /** Display name for this provider, e.g. 'openrouter-agent'. */
+  providerName: string;
+  /** Wire-level model id sent to the backend. */
+  model: string;
+  /** Base URL up to but not including `/chat/completions`. */
+  baseURL: string;
+  /** Env var holding the API key (preferred). */
+  apiKeyEnv?: string;
+  /** Explicit API key (overrides apiKeyEnv). */
+  apiKey?: string;
+  /** Per-1M-token prices used for cost estimation. */
+  pricePer1MIn?: number;
+  pricePer1MOut?: number;
+  /** Context window for router intent matching. */
+  contextWindow?: number;
+  /** Capability flag overrides (e.g. flip `reasoning: true` for o-series). */
+  capabilities?: Partial<AdapterCapabilities>;
+  /** Optional override for the reasoning effort param name. */
+  reasoningParam?: string;
+  /** Optional custom tool set. Defaults to the built-in CodeRouter toolbox. */
+  tools?: Tool[];
+  /** Per-HTTP-call timeout (ms). */
+  timeoutMs?: number;
+  /** Loop iteration cap. */
+  maxIterations?: number;
+  /** Loop wall-clock cap (ms). */
+  maxDurationMs?: number;
+};
+
+export class CodeRouterAgentAdapter extends BaseAdapter {
+  id: ProviderId = 'coderouter_agent';
+  name: string;
+  capabilities: AdapterCapabilities;
+
+  private readonly tools: Tool[];
+
+  constructor(public readonly opts: CodeRouterAgentAdapterOptions) {
+    super();
+    this.name = opts.providerName;
+    this.tools = opts.tools ?? defaultTools();
+    this.capabilities = {
+      canEdit: true,
+      canPlan: true,
+      longContext: (opts.contextWindow ?? 128_000) >= 200_000,
+      reasoning: false,
+      tools: true,
+      streaming: true,
+      vision: false,
+      pricePer1MIn: opts.pricePer1MIn ?? 0,
+      pricePer1MOut: opts.pricePer1MOut ?? 0,
+      contextWindow: opts.contextWindow ?? 128_000,
+      family: 'agent-loop',
+      ...opts.capabilities,
+    };
+  }
+
+  override async run(input: AdapterCallInput): Promise<AdapterCallResult> {
+    const apiKey =
+      this.opts.apiKey ?? (this.opts.apiKeyEnv ? process.env[this.opts.apiKeyEnv] : undefined);
+    if (!apiKey) {
+      throw new Error(
+        `CodeRouterAgentAdapter(${this.opts.providerName}): API key not set (env=${this.opts.apiKeyEnv ?? 'unset'})`,
+      );
+    }
+    if (!input.cwd) {
+      throw new Error(
+        'CodeRouterAgentAdapter: requires `cwd` (the agent worktree path) - the mode normally fills this in',
+      );
+    }
+
+    const transport = new OpenAICompatTransport({
+      providerName: this.opts.providerName,
+      model: this.opts.model,
+      baseURL: this.opts.baseURL,
+      apiKey,
+      timeoutMs: this.opts.timeoutMs,
+      pricePer1MIn: this.opts.pricePer1MIn,
+      pricePer1MOut: this.opts.pricePer1MOut,
+      reasoningParam: this.opts.reasoningParam,
+    });
+
+    const result = await runAgent({
+      prompt: input.prompt,
+      systemPrompt: input.systemPrompt,
+      cwd: input.cwd,
+      signal: input.signal,
+      tools: this.tools,
+      transport,
+      reasoningEffort: input.reasoningEffort,
+      onChunk: input.onChunk,
+      onActivity: input.onActivity,
+      onUsage: input.onUsage,
+      onUserQuestion: input.onUserQuestion,
+      budget: {
+        maxIterations: this.opts.maxIterations,
+        maxDurationMs: this.opts.maxDurationMs,
+        perCallTimeoutMs: this.opts.timeoutMs,
+      },
+    });
+
+    return {
+      text: result.text,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+    };
+  }
+}

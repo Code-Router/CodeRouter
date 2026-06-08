@@ -43,9 +43,19 @@ const PROFILES: Record<Effort, EffortProfile> = {
     dualPlanAutoThreshold: 0.95,
     tournamentAutoThreshold: 1.1,
     tournamentSize: 1,
-    maxHandoffPasses: 1,
+    // Handoff fix-pass off by default. Empirically it spent more
+    // time chasing flaky/environmental validator failures in the
+    // worktree (stale dist, env-specific tests, etc.) than it did
+    // making real improvements - and each pass adds 2-4 minutes
+    // for a single LLM call + revalidation. Power users opt back
+    // in via `/effort high`.
+    maxHandoffPasses: 0,
     maxCostUsd: 1.5,
-    maxDurationMs: 300_000,
+    // 90 seconds is a hard wall-clock cap on the handoff loop, NOT
+    // on the agent run itself. Short enough that nothing hangs for
+    // minutes; long enough for a single quick fixer pass when the
+    // user explicitly wants one.
+    maxDurationMs: 90_000,
     preferMasterplanResearch: true,
   },
   high: {
@@ -53,9 +63,12 @@ const PROFILES: Record<Effort, EffortProfile> = {
     dualPlanAutoThreshold: 0.75,
     tournamentAutoThreshold: 0.92,
     tournamentSize: 3,
-    maxHandoffPasses: 2,
+    maxHandoffPasses: 1,
     maxCostUsd: 5,
-    maxDurationMs: 600_000,
+    // 3 minute cap on the fix-pass loop at high effort. Down from
+    // 10min - same reasoning as medium, just with a wider runway
+    // for a single legitimate pass.
+    maxDurationMs: 180_000,
     preferMasterplanResearch: true,
   },
   max: {
@@ -63,9 +76,12 @@ const PROFILES: Record<Effort, EffortProfile> = {
     dualPlanAutoThreshold: 0.6,
     tournamentAutoThreshold: 0.7,
     tournamentSize: 4,
-    maxHandoffPasses: 3,
+    maxHandoffPasses: 2,
     maxCostUsd: 20,
-    maxDurationMs: 1_800_000,
+    // 5 minute cap at max effort. Anything longer is almost always
+    // an LLM stuck in a loop or a real-world hang we should bail
+    // on, not a productive fix.
+    maxDurationMs: 300_000,
     preferMasterplanResearch: true,
   },
 };

@@ -10,11 +10,13 @@ import {
 } from '@coderouter/core';
 import type {
   ActivityEvent,
+  AskUserQuestionPayload,
   Effort,
   Mode,
   ModeOutput,
   ProgressNotifier,
   ProviderConfig,
+  ProviderId,
   RouteRef,
   Store,
 } from '@coderouter/core';
@@ -63,11 +65,33 @@ export type CliRunOpts = {
    */
   onActivity?: (event: ActivityEvent) => void;
   /**
+   * Optional running-usage sink: cumulative token / cost numbers
+   * fired whenever the adapter has fresh data. Used by the REPL
+   * to render a live "X in · Y out · $0.0123" counter under the
+   * spinner row.
+   */
+  onUsage?: (usage: { tokensIn: number; tokensOut: number; costUsd: number }) => void;
+  /**
    * Prompt-injection enforcement policy. Defaults to 'warn' (record
    * findings but run anyway). Set to 'block' to refuse runs whose
    * prompts trigger any high-severity rule.
    */
   injectionPolicy?: 'warn' | 'block';
+  /**
+   * Per-provider session ids captured from earlier turns in this
+   * REPL session. The mode forwards the entry that matches the
+   * routed provider as `AdapterCallInput.resumeSessionId` so the
+   * agent can resume the prior conversation. Mismatches (different
+   * provider this turn, no entry) are silently ignored.
+   */
+  resumeSessions?: Partial<Record<ProviderId, string>>;
+  /**
+   * Optional callback for the model's interactive-question tool
+   * (Claude Code's `AskUserQuestion`). The REPL uses this to abort
+   * the headless run and surface the question to the operator
+   * instead of letting the model fall back to a guess.
+   */
+  onUserQuestion?: (payload: AskUserQuestionPayload) => void;
 };
 
 /**
@@ -83,6 +107,15 @@ export async function executeRun(opts: CliRunOpts): Promise<{
   const { config } = await loadConfig(opts.cwd);
   const providers = mergeProviders(config.providers as ProviderConfig[] | undefined);
   const registry = new ProviderRegistry(providers);
+  // Best-effort preload of the OpenRouter `/v1/models` catalog so a
+  // user with only an OpenRouter key can route to ANY tool-capable
+  // model on the platform - not just the curated handful we ship
+  // statically. Cached on disk (24h TTL) so subsequent runs don't
+  // pay the network cost. Failures are ignored: we still resolve
+  // statically-declared models when the network is unavailable.
+  if (process.env.OPENROUTER_API_KEY) {
+    await registry.loadOpenRouterCatalog().catch(() => undefined);
+  }
   const store = await openStore(resolveDbPath(opts.cwd));
   const bias = deriveMemoryBias(store, { taskType: 'feature' });
   const { notifier, close } = opts.progress ?? spinnerProgress();
@@ -102,7 +135,10 @@ export async function executeRun(opts: CliRunOpts): Promise<{
         signal: opts.signal,
         onChunk: opts.onChunk,
         onActivity: opts.onActivity,
+        onUsage: opts.onUsage,
         injectionPolicy: opts.injectionPolicy,
+        resumeSessions: opts.resumeSessions,
+        onUserQuestion: opts.onUserQuestion,
       },
       {
         registry,

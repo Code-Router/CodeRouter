@@ -23,6 +23,14 @@ export type HandoffOptions = {
   originalPrompt: string;
   /** Validators to run after each pass. */
   validators?: ValidatorSpec[];
+  /**
+   * Pre-computed validator results from the caller. When provided
+   * we skip the redundant first validator pass at the top of
+   * runHandoff - the caller (agent mode) just ran them, re-running
+   * the full suite costs another 2-3 minutes on a multi-package
+   * monorepo for zero new information.
+   */
+  initialValidators?: ValidatorResult[];
   /** The route that produced the work we're handing off from. */
   fromRoute: RouteRef;
   /** Budget caps; passes stop when exhausted. */
@@ -31,6 +39,12 @@ export type HandoffOptions = {
   reviewerRoute?: RouteRef;
   /** Persistent forbidden patterns from L5. */
   memoryForbidden?: string[];
+  /**
+   * Abort signal for ESC-while-busy. Threaded through to the inner
+   * adapter call AND the post-pass validator run so cancellation is
+   * actually responsive instead of waiting out a hung subprocess.
+   */
+  signal?: AbortSignal;
 };
 
 export type HandoffResult = {
@@ -64,12 +78,23 @@ export type HandoffPassResult = {
  * a strong route from the router.
  */
 export async function runHandoff(opts: HandoffOptions): Promise<HandoffResult> {
+  const startedAt = performance.now();
   const passes: HandoffPassResult[] = [];
   let totalCostUsd = 0;
-  let validators = await runValidators({
-    cwd: opts.worktree.path,
-    validators: opts.validators,
-  });
+
+  // First validator pass: trust the caller's pre-computed result
+  // when given. The agent mode ALWAYS runs validators right before
+  // calling us - re-running the entire suite from scratch here would
+  // cost another 2-3 minutes on a typical monorepo for zero new
+  // information. Only fall back to running them ourselves when the
+  // caller didn't pre-compute (review mode, tests, etc.).
+  let validators: ValidatorResult[] =
+    opts.initialValidators ??
+    (await runValidators({
+      cwd: opts.worktree.path,
+      validators: opts.validators,
+      signal: opts.signal,
+    }));
   let status: RunOutcome['status'] = summarize(validators).status === 'pass' ? 'success' : 'partial';
 
   const maxPasses = opts.mode === 'review' ? 1 : opts.budget.maxHandoffPasses;
@@ -79,6 +104,19 @@ export async function runHandoff(opts: HandoffOptions): Promise<HandoffResult> {
       break;
     }
     if (totalCostUsd >= opts.budget.maxCostUsd) {
+      status = 'partial';
+      break;
+    }
+    // Hard time budget. The maxDurationMs field used to live only
+    // in the brief shown to the model; nothing actually cut us off
+    // when the LLM took 5+ minutes per call. Now we enforce it as
+    // a wall-clock cap and bail with whatever validators we last
+    // observed so the caller still gets a coherent report.
+    if (performance.now() - startedAt >= opts.budget.maxDurationMs) {
+      status = 'partial';
+      break;
+    }
+    if (opts.signal?.aborted) {
       status = 'partial';
       break;
     }
@@ -112,15 +150,38 @@ export async function runHandoff(opts: HandoffOptions): Promise<HandoffResult> {
     const out = await adapter.run({
       prompt: renderBriefAsPrompt(brief),
       cwd: opts.worktree.path,
+      signal: opts.signal,
     });
     const durationMs = performance.now() - t0;
     totalCostUsd += out.costUsd;
 
     if (opts.mode === 'fix') {
-      validators = await runValidators({
-        cwd: opts.worktree.path,
-        validators: opts.validators,
-      });
+      // Subset re-validation: only re-run the validators that
+      // previously failed. If lint failed but tsc + tests passed,
+      // there's no point re-running tsc + tests after every fixer
+      // pass - they were already green and we'd burn another 2-3
+      // minutes. The unfailed validators carry forward as-is.
+      const failedNames = new Set(
+        validators.filter((v) => v.status === 'fail').map((v) => v.name),
+      );
+      const subsetSpecs = opts.validators?.filter((s) => failedNames.has(s.name));
+      const reRun =
+        subsetSpecs && subsetSpecs.length > 0
+          ? await runValidators({
+              cwd: opts.worktree.path,
+              validators: subsetSpecs,
+              signal: opts.signal,
+            })
+          : await runValidators({
+              cwd: opts.worktree.path,
+              validators: opts.validators,
+              signal: opts.signal,
+            }).then((all) => all.filter((v) => failedNames.has(v.name)));
+      // Merge: previously-passing validators keep their pass; the
+      // re-run results overwrite their counterparts.
+      const byName = new Map(validators.map((v) => [v.name, v]));
+      for (const v of reRun) byName.set(v.name, v);
+      validators = [...byName.values()];
     }
 
     passes.push({

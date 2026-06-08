@@ -38,6 +38,14 @@ export function renderReportText(r: Report, opts?: { includeText?: boolean }): s
         lines.push(`     ... and ${v.failures.length - head.length} more`);
       }
     }
+  } else if (r.validatorsSkippedReason) {
+    // Surface the skip reason so the user understands why no
+    // lint / typecheck / test output appeared. The reason strings
+    // are short tags (no-file-changes, no-node-sources-changed,
+    // node-deps-not-installed-in-worktree, fast-mode) so we
+    // translate them inline to a friendlier sentence.
+    lines.push('');
+    lines.push(`validators: skipped (${describeSkip(r.validatorsSkippedReason)})`);
   }
 
   if (r.filesChanged?.length) {
@@ -100,6 +108,25 @@ export function renderReportText(r: Report, opts?: { includeText?: boolean }): s
  */
 export function renderReportFooterText(r: Report): string {
   return renderReportText(r, { includeText: false });
+}
+
+function describeSkip(reason: string): string {
+  switch (reason) {
+    case 'no-file-changes':
+      return 'no files changed';
+    case 'fast-mode':
+      return '--fast';
+    default:
+      if (reason.endsWith('-deps-not-installed-in-worktree')) {
+        const lang = reason.replace('-deps-not-installed-in-worktree', '');
+        return `${lang} deps not installed in worktree`;
+      }
+      if (reason.startsWith('no-') && reason.endsWith('-sources-changed')) {
+        const lang = reason.replace('no-', '').replace('-sources-changed', '');
+        return `no ${lang} sources changed`;
+      }
+      return reason;
+  }
 }
 
 function pad(s: string, n: number): string {

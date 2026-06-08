@@ -150,6 +150,13 @@ export class CodexAdapter extends BaseAdapter {
     const parser = new CodexJsonStream({
       onChunk: input.onChunk,
       onActivity: input.onActivity,
+      onUsage: input.onUsage,
+      estimateCost: (i: number, o: number) => this.estimateCost(i, o),
+      // Rough prompt-token estimate so the live counter shows a
+      // meaningful "<N> in" the moment the run starts, before
+      // codex's authoritative numbers arrive at turn.completed.
+      // ~4 chars per token is OpenAI's published rule of thumb.
+      promptTokenEstimate: Math.max(1, Math.ceil(input.prompt.length / 4)),
     });
 
     const res = await exec(this.opts.bin ?? 'codex', args, {
@@ -243,13 +250,63 @@ class CodexJsonStream {
   usage: CodexUsage = {};
   eventCount = 0;
   lastError: string | null = null;
+  /**
+   * Total streamed text so we can fire estimate-based usage updates
+   * before turn.completed arrives - Codex doesn't report usage
+   * mid-turn, so without this the live token counter would sit at 0
+   * for the entire run and only jump to the real value at the end.
+   */
+  private streamedTextLen = 0;
+  /** Last time we estimated usage; throttle to avoid spamming. */
+  private lastEstimateAt = 0;
+  /**
+   * Approximate input-token count for the prompt. Filled from the
+   * adapter so we can show "<promptTokens> in · <streamed/4> out"
+   * almost immediately, even before any model output arrives.
+   */
+  private promptTokenEstimate = 0;
 
   constructor(
     private readonly opts: {
       onChunk?: (s: string) => void;
       onActivity?: (e: ActivityEvent) => void;
+      onUsage?: (u: { tokensIn: number; tokensOut: number; costUsd: number }) => void;
+      estimateCost?: (tokensIn: number, tokensOut: number) => number;
+      promptTokenEstimate?: number;
     },
-  ) {}
+  ) {
+    this.promptTokenEstimate = opts.promptTokenEstimate ?? 0;
+    if (this.promptTokenEstimate > 0) {
+      // Fire once up front so the spinner immediately shows
+      // "<N> in · 0 out · …" instead of an empty token segment.
+      this.opts.onUsage?.({
+        tokensIn: this.promptTokenEstimate,
+        tokensOut: 0,
+        costUsd: 0,
+      });
+    }
+  }
+
+  /**
+   * Push a streaming-time usage estimate to the UI based on the
+   * cumulative output text length (~4 chars per token, the OpenAI
+   * rule of thumb). Throttled to ~250ms so we don't drown React
+   * in re-renders. Replaced wholesale by the real numbers the moment
+   * `turn.completed` arrives.
+   */
+  private maybeEmitEstimate(): void {
+    if (!this.opts.onUsage) return;
+    const now = Date.now();
+    if (now - this.lastEstimateAt < 250) return;
+    this.lastEstimateAt = now;
+    const tokensOut = Math.max(0, Math.round(this.streamedTextLen / 4));
+    const tokensIn = this.promptTokenEstimate || (this.usage.input_tokens ?? 0);
+    this.opts.onUsage({
+      tokensIn,
+      tokensOut,
+      costUsd: this.opts.estimateCost?.(tokensIn, tokensOut) ?? 0,
+    });
+  }
 
   push(chunk: string): void {
     this.buffer += chunk;
@@ -299,7 +356,9 @@ class CodexJsonStream {
           if (text.length > prev.length) {
             const delta = text.slice(prev.length);
             this.agentTexts.set(item.id, text);
+            this.streamedTextLen += delta.length;
             this.opts.onChunk?.(delta);
+            this.maybeEmitEstimate();
           } else if (text.length < prev.length) {
             this.agentTexts.set(item.id, text);
           }
@@ -309,7 +368,21 @@ class CodexJsonStream {
         return;
       }
       case 'turn.completed':
-        if (ev.usage) this.usage = ev.usage;
+        if (ev.usage) {
+          this.usage = ev.usage;
+          // codex doesn't surface its own cost number, so we lean
+          // on the adapter's per-token estimator for the live
+          // counter. The eval harness still records what we
+          // measured, not what we estimated, by re-resolving the
+          // final cost in the adapter's run() method.
+          const tokensIn = ev.usage.input_tokens ?? 0;
+          const tokensOut = ev.usage.output_tokens ?? 0;
+          this.opts.onUsage?.({
+            tokensIn,
+            tokensOut,
+            costUsd: this.opts.estimateCost?.(tokensIn, tokensOut) ?? 0,
+          });
+        }
         return;
       case 'turn.failed':
         this.lastError = ev.error?.message ?? null;

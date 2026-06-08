@@ -5,6 +5,8 @@ import type {
   ActivityEvent,
   AdapterCallInput,
   AdapterCallResult,
+  AskUserQuestionEntry,
+  AskUserQuestionPayload,
 } from './types.js';
 
 export type ClaudeCodeAdapterOptions = {
@@ -65,11 +67,24 @@ export class ClaudeCodeAdapter extends BaseAdapter {
     const args = ['-p', input.prompt, '--output-format', 'stream-json', '--verbose'];
     if (this.opts.model) args.push('--model', this.opts.model);
     args.push('--permission-mode', this.opts.permissionMode ?? 'bypassPermissions');
+    // Replay the prior conversation when the caller has a session id
+    // from an earlier run. `claude --resume <id>` rehydrates the
+    // model's context window so follow-up prompts ("you run it",
+    // "the game you just made") actually reach a model that
+    // remembers the original turn. We always pass the prompt via
+    // `-p` regardless of resume so we keep the headless / scripted
+    // behaviour of stream-json output rather than dropping into
+    // claude's interactive REPL.
+    if (input.resumeSessionId) args.push('--resume', input.resumeSessionId);
     if (this.opts.extraArgs) args.push(...this.opts.extraArgs);
 
     const parser = new ClaudeJsonStream({
       onChunk: input.onChunk,
       onActivity: input.onActivity,
+      onUsage: input.onUsage,
+      estimateCost: (i: number, o: number) => this.estimateCost(i, o),
+      onModelResolved: input.onModelResolved,
+      onUserQuestion: input.onUserQuestion,
     });
 
     const res = await exec(this.opts.bin ?? 'claude', args, {
@@ -97,6 +112,7 @@ export class ClaudeCodeAdapter extends BaseAdapter {
       tokensOut,
       costUsd,
       durationMs: res.durationMs,
+      sessionId: parser.sessionId ?? undefined,
       raw: { stdout: res.stdout, stderr: res.stderr, events: parser.eventCount },
     };
   }
@@ -121,6 +137,13 @@ type ClaudeMessage = {
   role?: 'assistant' | 'user';
   content?: ClaudeContentBlock[];
   usage?: ClaudeUsage;
+  /**
+   * Resolved Claude model name (e.g. `claude-sonnet-4-5-20250929`).
+   * Surfaced on every assistant message; we use the first one we
+   * see to upgrade the route label from the shorthand we requested
+   * (`sonnet` / `opus`) to the actual versioned name.
+   */
+  model?: string;
 };
 
 type ClaudeStreamEvent = {
@@ -135,6 +158,19 @@ type ClaudeStreamEvent = {
   duration_ms?: number;
   duration_api_ms?: number;
   usage?: ClaudeUsage;
+  /**
+   * Top-level model field on the `system/init` event Claude Code
+   * emits at session start. Same value as `message.model` on later
+   * assistant events; we capture whichever arrives first.
+   */
+  model?: string;
+  /**
+   * Session identifier on `system/init`. We capture this once per
+   * run and surface it on `AdapterCallResult.sessionId` so the REPL
+   * can pass it back via `--resume <id>` on the next turn, giving
+   * the model conversational memory across prompts.
+   */
+  session_id?: string;
 };
 
 /**
@@ -162,15 +198,41 @@ class ClaudeJsonStream {
   private textSoFar = '';
   /** tool_use_id -> tool name, so tool_results can recover the name. */
   private toolNames = new Map<string, string>();
-  usage: ClaudeUsage = {};
+  /**
+   * Cumulative token tally across the whole run. Claude reports
+   * usage PER assistant message (deltas), not cumulative - so we
+   * sum here. The final `result` event carries authoritative totals
+   * which we use to overwrite once it arrives.
+   */
+  usage: ClaudeUsage = { input_tokens: 0, output_tokens: 0 };
+  /** Whether the authoritative `result` event has overwritten usage. */
+  private usageFinal = false;
   totalCostUsd = 0;
   eventCount = 0;
   resultText: string | null = null;
+  /**
+   * Claude's authoritative model id (e.g. `claude-sonnet-4-5-20250929`),
+   * captured the first time we see it on a `system/init` or assistant
+   * event. The CLI's `--model sonnet` shorthand resolves server-side
+   * and we want to surface the real identifier on the route label.
+   */
+  resolvedModel: string | null = null;
+  /**
+   * Claude Code session id for this run. Captured from the
+   * `system/init` event. Surfaced on `AdapterCallResult.sessionId`
+   * so the REPL can replay it via `--resume <id>` on follow-up
+   * turns to preserve conversational context.
+   */
+  sessionId: string | null = null;
 
   constructor(
     private readonly opts: {
       onChunk?: (s: string) => void;
       onActivity?: (e: ActivityEvent) => void;
+      onUsage?: (u: { tokensIn: number; tokensOut: number; costUsd: number }) => void;
+      estimateCost?: (tokensIn: number, tokensOut: number) => number;
+      onModelResolved?: (model: string) => void;
+      onUserQuestion?: (payload: AskUserQuestionPayload) => void;
     },
   ) {}
 
@@ -206,12 +268,43 @@ class ClaudeJsonStream {
     }
     this.eventCount += 1;
 
+    // Capture the resolved model id the first time it appears.
+    // `system/init` carries it at the top level; assistant events
+    // carry it on `message.model`. Either fires the callback once.
+    if (!this.resolvedModel) {
+      const modelFromInit =
+        ev.type === 'system' && ev.subtype === 'init' ? ev.model : undefined;
+      const modelFromAssistant = ev.message?.model;
+      const model = modelFromInit ?? modelFromAssistant;
+      if (typeof model === 'string' && model.length > 0) {
+        this.resolvedModel = model;
+        this.opts.onModelResolved?.(model);
+      }
+    }
+
+    // Capture the session id from system/init exactly once. This is
+    // the handle we'll pass to `claude --resume <id>` on the next
+    // turn so the model retains the prior conversation.
+    if (!this.sessionId && ev.type === 'system' && ev.subtype === 'init' && ev.session_id) {
+      this.sessionId = ev.session_id;
+    }
+
     if (ev.type === 'assistant' && ev.message?.content) {
       this.handleAssistantBlocks(ev.message.content);
-      if (ev.message.usage) {
-        // claude reports cumulative usage on every assistant message;
-        // overwrite (not add) so we end with the final tally.
-        this.usage = ev.message.usage;
+      if (ev.message.usage && !this.usageFinal) {
+        // Claude emits usage PER assistant message (one turn of a
+        // larger tool-use loop), not cumulative across the run.
+        // Add deltas so the live counter reflects the running total
+        // rather than just the most recent message - that's why the
+        // spinner used to read "1 in · 3 out" after several minutes
+        // of activity.
+        this.usage = {
+          input_tokens:
+            (this.usage.input_tokens ?? 0) + (ev.message.usage.input_tokens ?? 0),
+          output_tokens:
+            (this.usage.output_tokens ?? 0) + (ev.message.usage.output_tokens ?? 0),
+        };
+        this.emitUsage();
       }
       return;
     }
@@ -222,9 +315,33 @@ class ClaudeJsonStream {
     if (ev.type === 'result') {
       if (typeof ev.result === 'string') this.resultText = ev.result;
       if (typeof ev.total_cost_usd === 'number') this.totalCostUsd = ev.total_cost_usd;
-      if (ev.usage) this.usage = ev.usage;
+      // The result event is authoritative - it carries the final
+      // run-wide totals from claude itself. Overwrite our running
+      // sum with these and lock the field so any late assistant
+      // events that arrive after `result` don't double-count.
+      if (ev.usage) {
+        this.usage = ev.usage;
+        this.usageFinal = true;
+      }
+      this.emitUsage();
       return;
     }
+  }
+
+  /**
+   * Push the current cumulative usage to the UI. Cost prefers
+   * claude's authoritative `total_cost_usd` from the result event;
+   * before that arrives we fall back to the adapter's per-token
+   * estimate so the live counter doesn't sit at $0.0000 the whole
+   * way through.
+   */
+  private emitUsage(): void {
+    const tokensIn = this.usage.input_tokens ?? 0;
+    const tokensOut = this.usage.output_tokens ?? 0;
+    const cost = this.totalCostUsd > 0
+      ? this.totalCostUsd
+      : (this.opts.estimateCost?.(tokensIn, tokensOut) ?? 0);
+    this.opts.onUsage?.({ tokensIn, tokensOut, costUsd: cost });
   }
 
   private handleAssistantBlocks(blocks: ClaudeContentBlock[]): void {
@@ -261,6 +378,19 @@ class ClaudeJsonStream {
           description: describeClaudeToolUse(block.name, block.input ?? {}),
           toolUseId,
         });
+        // The model invoked the built-in interactive-question tool.
+        // Headless `claude -p` can't deliver the answer back, so we
+        // surface the structured question to the REPL via the
+        // dedicated callback - the REPL is then free to abort the
+        // run and show an answer prompt to the operator. We still
+        // emit the regular tool_use activity above so the question
+        // also appears in the activity log for context.
+        if (block.name === 'AskUserQuestion' && this.opts.onUserQuestion) {
+          const payload = parseAskUserQuestionInput(block.input ?? {});
+          if (payload.questions.length > 0) {
+            this.opts.onUserQuestion(payload);
+          }
+        }
         continue;
       }
     }
@@ -401,9 +531,57 @@ function describeClaudeToolUse(tool: string, input: Record<string, unknown>): st
       const desc = get('description') ?? get('prompt');
       return desc ? `Delegated to subagent: ${oneLine(desc, 60)}` : 'Delegated to subagent';
     }
+    case 'AskUserQuestion': {
+      // The first question is usually enough for a one-line label;
+      // the REPL will render the full payload in its own panel.
+      const parsed = parseAskUserQuestionInput(input);
+      const first = parsed.questions[0];
+      return first ? `Asked: ${oneLine(first.question, 80)}` : 'Asked the user a question';
+    }
     default:
       return capitalize(tool);
   }
+}
+
+/**
+ * Best-effort parse of the `AskUserQuestion` tool's input payload
+ * into our typed shape. Tolerant of missing fields and shape
+ * variations - returns an empty `questions` array when the input
+ * doesn't match anything recognisable, which the caller treats as
+ * "don't fire onUserQuestion".
+ */
+function parseAskUserQuestionInput(input: Record<string, unknown>): AskUserQuestionPayload {
+  const rawQuestions = input.questions;
+  if (!Array.isArray(rawQuestions)) return { questions: [] };
+
+  const questions: AskUserQuestionEntry[] = [];
+  for (const raw of rawQuestions) {
+    if (!raw || typeof raw !== 'object') continue;
+    const obj = raw as Record<string, unknown>;
+    const question = typeof obj.question === 'string' ? obj.question : null;
+    if (!question) continue;
+    const header = typeof obj.header === 'string' ? obj.header : undefined;
+    const multiSelect = obj.multiSelect === true;
+    const rawOptions = obj.options;
+    const options: AskUserQuestionEntry['options'] = [];
+    if (Array.isArray(rawOptions)) {
+      for (const optRaw of rawOptions) {
+        if (!optRaw || typeof optRaw !== 'object') continue;
+        const opt = optRaw as Record<string, unknown>;
+        const label = typeof opt.label === 'string' ? opt.label : null;
+        if (!label) continue;
+        const description = typeof opt.description === 'string' ? opt.description : undefined;
+        options.push({ label, description });
+      }
+    }
+    questions.push({
+      question,
+      header,
+      multiSelect,
+      options: options.length > 0 ? options : undefined,
+    });
+  }
+  return { questions };
 }
 
 function capitalize(s: string): string {

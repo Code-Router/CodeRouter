@@ -83,6 +83,75 @@ export type AdapterCallInput = {
    * contract.
    */
   onActivity?: (event: ActivityEvent) => void;
+  /**
+   * Optional running-usage sink. Adapters call this whenever they
+   * have updated cumulative token / cost numbers - typically once
+   * per assistant message for streaming providers, once at end of
+   * run for non-streaming. Used by the REPL to render a live
+   * "X in · Y out · $0.0123" counter so the user can watch cost
+   * accumulate in real time. Idempotent: each call carries the
+   * cumulative total, not a delta.
+   */
+  onUsage?: (usage: { tokensIn: number; tokensOut: number; costUsd: number }) => void;
+  /**
+   * Optional notification when the underlying provider resolves the
+   * actual model id (e.g. `claude --model sonnet` resolves to
+   * `claude-sonnet-4-5-20250929` server-side). Fired at most once per
+   * run, as soon as the adapter learns the resolved name. The REPL
+   * uses it to upgrade the route label from the requested shorthand
+   * to the real versioned identifier so the user knows exactly which
+   * model produced the output.
+   */
+  onModelResolved?: (model: string) => void;
+  /**
+   * Optional opaque session id from a previous run with the same
+   * adapter, captured via `AdapterCallResult.sessionId`. Adapters
+   * that support conversational continuity (Claude Code's
+   * `--resume <id>`, Codex's session continuation) MUST honour this
+   * to give the model conversational memory across REPL turns. A
+   * mismatched id (different provider, expired session) MUST be
+   * tolerated by silently starting a fresh conversation rather
+   * than failing - the REPL doesn't know which provider the router
+   * will pick on the next turn until the call is dispatched.
+   */
+  resumeSessionId?: string;
+  /**
+   * Optional callback fired the moment the model invokes a built-in
+   * "ask the user a clarifying question" tool (Claude Code's
+   * `AskUserQuestion`). The headless `claude -p` subprocess can't
+   * actually wait for an answer - it fails the tool call and the
+   * model falls back to a guess. The callback gives the REPL a
+   * chance to:
+   *
+   *   1. Surface the question to the operator,
+   *   2. Abort the in-flight run before the model commits to a
+   *      fallback decision,
+   *   3. Capture the user's answer and dispatch it as the next
+   *      prompt (with `resumeSessionId` so the agent has full
+   *      context of what it just asked).
+   *
+   * Adapters that don't have an interactive-question tool simply
+   * never fire this.
+   */
+  onUserQuestion?: (payload: AskUserQuestionPayload) => void;
+};
+
+/**
+ * Structured form of a Claude Code `AskUserQuestion` tool call. We
+ * preserve the original shape (questions[] with per-question
+ * header / multiSelect / options) so the REPL can render a
+ * faithful interactive picker. Each option carries an optional
+ * description shown alongside the label.
+ */
+export type AskUserQuestionPayload = {
+  questions: AskUserQuestionEntry[];
+};
+
+export type AskUserQuestionEntry = {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: Array<{ label: string; description?: string }>;
 };
 
 export type AdapterCallResult = {
@@ -93,6 +162,15 @@ export type AdapterCallResult = {
   durationMs: number;
   filesChanged?: string[];
   raw?: unknown;
+  /**
+   * Adapter-defined session id the caller can pass back via
+   * `AdapterCallInput.resumeSessionId` on a subsequent run to
+   * preserve conversational state. Only set by adapters that have
+   * a real notion of a session (Claude Code, Codex). Treat as
+   * opaque - never inspect the structure outside the adapter that
+   * produced it.
+   */
+  sessionId?: string;
 };
 
 export type Adapter = {

@@ -13,6 +13,14 @@ export type FileStats = {
   insertions: number;
   deletions: number;
   binary?: boolean;
+  /**
+   * True when the patch removes the file entirely (`deleted file mode
+   * 100644` header). The REPL uses this to decide whether to auto-apply
+   * the artifact or pause for explicit approval - users want
+   * non-destructive changes to land without ceremony, but always want
+   * to see a confirm prompt before a file is removed from disk.
+   */
+  deleted?: boolean;
 };
 
 /**
@@ -229,6 +237,10 @@ function parsePerFileStats(patch: string): FileStats[] {
       current.binary = true;
       continue;
     }
+    if (line.startsWith('deleted file mode')) {
+      current.deleted = true;
+      continue;
+    }
     // Skip header lines so they don't get counted as +/-
     if (
       line.startsWith('+++') ||
@@ -236,7 +248,6 @@ function parsePerFileStats(patch: string): FileStats[] {
       line.startsWith('@@') ||
       line.startsWith('index ') ||
       line.startsWith('new file mode') ||
-      line.startsWith('deleted file mode') ||
       line.startsWith('similarity index') ||
       line.startsWith('rename from') ||
       line.startsWith('rename to')

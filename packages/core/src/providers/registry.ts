@@ -1,5 +1,13 @@
+import {
+  fetchOpenRouterModels,
+  isToolCapable,
+  pricePer1MIn,
+  pricePer1MOut,
+  type OpenRouterModel,
+} from '../agent/providers/openrouter.js';
 import { AnthropicAdapter } from '../adapters/anthropic.js';
 import { ClaudeCodeAdapter } from '../adapters/claudeCode.js';
+import { CodeRouterAgentAdapter } from '../adapters/coderouterAgent.js';
 import { CodexAdapter } from '../adapters/codex.js';
 import { GoogleAdapter } from '../adapters/google.js';
 import { OllamaAdapter } from '../adapters/ollama.js';
@@ -27,6 +35,14 @@ export type ResolvedRoute = {
 export class ProviderRegistry {
   private readonly providers = new Map<string, ProviderConfig>();
   private readonly adapterCache = new Map<string, Adapter>();
+  /**
+   * In-memory OpenRouter catalog, keyed by `model.id`. Populated by
+   * `loadOpenRouterCatalog` (called once at startup by the runtime
+   * when the OpenRouter key is configured). Stays empty if the
+   * runtime never calls it; resolution then falls back to the
+   * static `models` map only.
+   */
+  private openRouterCatalog: Map<string, OpenRouterModel> = new Map();
 
   constructor(providers: ProviderConfig[] = []) {
     for (const p of providers) this.providers.set(p.name, p);
@@ -45,6 +61,45 @@ export class ProviderRegistry {
 
   has(name: string): boolean {
     return this.providers.has(name);
+  }
+
+  /**
+   * Pull the OpenRouter `/v1/models` catalog into memory so
+   * subsequent sync `resolve()` calls can synthesize configs for
+   * arbitrary OpenRouter model ids (not just the curated handful
+   * declared in the static catalog). Safe to call repeatedly;
+   * cached on disk with a 24h TTL by default.
+   */
+  async loadOpenRouterCatalog(opts: { force?: boolean } = {}): Promise<OpenRouterModel[]> {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    const all = await fetchOpenRouterModels({ apiKey, force: opts.force });
+    this.openRouterCatalog = new Map(all.map((m) => [m.id, m]));
+    // Flush adapter cache for providers using the dynamic catalog
+    // - their resolved configs may now be different.
+    for (const key of [...this.adapterCache.keys()]) {
+      const [providerName] = key.split(',');
+      if (!providerName) continue;
+      const provider = this.providers.get(providerName);
+      if (provider?.dynamicCatalog === 'openrouter') this.adapterCache.delete(key);
+    }
+    return all;
+  }
+
+  /**
+   * Look up a model in the in-memory OpenRouter catalog. Returns
+   * null when the catalog hasn't been loaded or the id is unknown.
+   * Pure data accessor - no network calls.
+   */
+  getOpenRouterCatalogModel(id: string): OpenRouterModel | null {
+    return this.openRouterCatalog.get(id) ?? null;
+  }
+
+  /**
+   * All OpenRouter models currently in memory. Empty until
+   * `loadOpenRouterCatalog` has been called.
+   */
+  listOpenRouterCatalogModels(): OpenRouterModel[] {
+    return [...this.openRouterCatalog.values()];
   }
 
   /**
@@ -76,6 +131,13 @@ export class ProviderRegistry {
       if (process.env.CODEROUTER_DISABLE_OLLAMA === '1') return false;
       return whichSync('ollama') !== null;
     }
+    // coderouter_agent providers piggy-back on the same API key as
+    // their chat-only sibling - readiness is just "is the key set".
+    if (provider.adapter === 'coderouter_agent') {
+      if (provider.apiKey) return true;
+      if (provider.apiKeyEnv && process.env[provider.apiKeyEnv]) return true;
+      return false;
+    }
     if (provider.apiKey) return true;
     if (provider.apiKeyEnv && process.env[provider.apiKeyEnv]) return true;
     return false;
@@ -97,7 +159,7 @@ export class ProviderRegistry {
         `ProviderRegistry: unknown provider '${providerName}' (have: ${[...this.providers.keys()].join(', ')})`,
       );
     }
-    const modelCfg = provider.models[model];
+    const modelCfg = provider.models[model] ?? this.resolveDynamicModel(provider, model);
     if (!modelCfg) {
       throw new Error(
         `ProviderRegistry: unknown model '${model}' on provider '${providerName}' (have: ${Object.keys(provider.models).join(', ')})`,
@@ -115,6 +177,39 @@ export class ProviderRegistry {
     const wrapped = applyTransformers(adapter, transformers, providerName);
     this.adapterCache.set(cacheKey, wrapped);
     return { providerName, model, adapter: wrapped };
+  }
+
+  /**
+   * Synthesize a `ProviderModelConfig` from a dynamic catalog entry
+   * when the static `provider.models` map doesn't contain the
+   * requested model id. Returns undefined to fall through to the
+   * normal "unknown model" error.
+   *
+   * Today supports `openrouter`; other catalogs (e.g. Together's
+   * `/models`) can be plugged in here as we add support for them.
+   */
+  private resolveDynamicModel(
+    provider: ProviderConfig,
+    modelId: string,
+  ): ProviderModelConfig | undefined {
+    if (provider.dynamicCatalog !== 'openrouter') return undefined;
+    const m = this.openRouterCatalog.get(modelId);
+    if (!m) return undefined;
+    // For agent providers, only accept tool-capable models so we
+    // don't dispatch an editing run at a model that'll silently
+    // ignore the tool schema.
+    const needsTools = provider.adapter === 'coderouter_agent';
+    if (needsTools && !isToolCapable(m)) return undefined;
+    const capabilities: ProviderModelConfig['capabilities'] =
+      provider.adapter === 'coderouter_agent'
+        ? { canEdit: true, tools: true }
+        : {};
+    return {
+      pricePer1MIn: pricePer1MIn(m),
+      pricePer1MOut: pricePer1MOut(m),
+      contextWindow: m.context_length,
+      capabilities,
+    };
   }
 
   private buildAdapter(
@@ -169,6 +264,21 @@ export class ProviderRegistry {
         return new CodexAdapter({ model });
       case 'claude_code':
         return new ClaudeCodeAdapter({ model });
+      case 'coderouter_agent':
+        if (!provider.baseURL)
+          throw new Error(`coderouter_agent provider '${provider.name}' requires baseURL`);
+        return new CodeRouterAgentAdapter({
+          providerName: provider.name,
+          model,
+          baseURL: provider.baseURL,
+          apiKey,
+          apiKeyEnv: provider.apiKeyEnv,
+          pricePer1MIn: cfg.pricePer1MIn,
+          pricePer1MOut: cfg.pricePer1MOut,
+          contextWindow: cfg.contextWindow,
+          capabilities: cfg.capabilities,
+          reasoningParam: cfg.reasoningParam,
+        });
       default:
         throw new Error(`ProviderRegistry: unsupported adapter '${provider.adapter}'`);
     }
@@ -259,6 +369,7 @@ export function defaultProviders(): ProviderConfig[] {
       baseURL: 'https://openrouter.ai/api/v1',
       apiKeyEnv: 'OPENROUTER_API_KEY',
       transformer: ['maxTokens', 'tooluse', 'streaming'],
+      dynamicCatalog: 'openrouter',
       models: {
         'anthropic/claude-opus-4-5': {
           pricePer1MIn: 15,
@@ -287,6 +398,47 @@ export function defaultProviders(): ProviderConfig[] {
           pricePer1MIn: 0.27,
           pricePer1MOut: 1.1,
           contextWindow: 128_000,
+        },
+      },
+    },
+    // Tool-calling sibling of the openrouter chat provider above.
+    // Same baseURL + same key env var, but hands off to
+    // `CodeRouterAgentAdapter` (canEdit: true) so users with only
+    // an OpenRouter key get a real coding agent for `/agent` runs
+    // instead of just a chat reply. The router prefers this entry
+    // for `balanced-agent` / `multi-file` intents via the catalog.
+    {
+      name: 'openrouter_agent',
+      adapter: 'coderouter_agent',
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKeyEnv: 'OPENROUTER_API_KEY',
+      transformer: [],
+      dynamicCatalog: 'openrouter',
+      models: {
+        'anthropic/claude-sonnet-4-5': {
+          pricePer1MIn: 3,
+          pricePer1MOut: 15,
+          contextWindow: 200_000,
+          capabilities: { canEdit: true, tools: true },
+        },
+        'anthropic/claude-opus-4-5': {
+          pricePer1MIn: 15,
+          pricePer1MOut: 75,
+          contextWindow: 200_000,
+          capabilities: { canEdit: true, tools: true },
+        },
+        'openai/gpt-5': {
+          pricePer1MIn: 5,
+          pricePer1MOut: 15,
+          contextWindow: 400_000,
+          reasoningParam: 'reasoning_effort',
+          capabilities: { canEdit: true, tools: true, reasoning: true },
+        },
+        'openai/gpt-4o': {
+          pricePer1MIn: 2.5,
+          pricePer1MOut: 10,
+          contextWindow: 128_000,
+          capabilities: { canEdit: true, tools: true },
         },
       },
     },

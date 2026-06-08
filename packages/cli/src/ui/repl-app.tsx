@@ -2,11 +2,15 @@ import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Static, Text, render, useApp, useInput } from 'ink';
 import type {
   ActivityEvent,
+  AskUserQuestionPayload,
   InjectionFinding,
   Mode,
   ProgressNotifier,
+  ProviderId,
+  RouteRef,
 } from '@coderouter/core';
 import {
+  agent,
   renderReportFooterText,
   renderReportText,
   sandbox,
@@ -74,6 +78,7 @@ const COMMANDS: CommandDef[] = [
   { name: 'fast', hint: '', desc: 'toggle: skip classifier/context' },
   { name: 'scan', hint: '<text>', desc: 'check text for prompt-injection markers' },
   { name: 'security', hint: 'warn|block', desc: 'set prompt-injection policy' },
+  { name: 'models', hint: '[search]', desc: 'browse OpenRouter tool-capable models' },
   { name: 'runs', hint: '', desc: 'list saved run patches' },
   { name: 'accept', hint: '[runId]', desc: 'apply a saved run (latest if omitted)' },
   { name: 'reject', hint: '[runId]', desc: 'discard a saved run' },
@@ -91,7 +96,8 @@ type HistoryItem =
   | { id: number; kind: 'system'; text: string; tone?: 'info' | 'warn' | 'error' | 'success' }
   | { id: number; kind: 'report'; text: string }
   | { id: number; kind: 'log'; entries: LogEntry[] }
-  | { id: number; kind: 'changes'; stats: FileStats[] };
+  | { id: number; kind: 'changes'; stats: FileStats[] }
+  | { id: number; kind: 'question'; payload: AskUserQuestionPayload };
 
 type WizardStep = 'idle' | 'trust' | 'confirm' | 'pick' | 'key' | 'review';
 
@@ -112,7 +118,7 @@ type WizardStep = 'idle' | 'trust' | 'confirm' | 'pick' | 'key' | 'review';
  *   - `thinking`  reasoning summaries from codex; rendered dim
  */
 type LogEntry =
-  | { id: number; kind: 'text'; text: string }
+  | { id: number; kind: 'text'; text: string; routeLabel?: string }
   | {
       id: number;
       kind: 'tool';
@@ -120,6 +126,7 @@ type LogEntry =
       description: string;
       ok?: boolean;
       body?: string;
+      routeLabel?: string;
     }
   | { id: number; kind: 'thinking'; text: string };
 
@@ -196,7 +203,13 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>(initialMode ?? 'agent');
   const [effort, setEffort] = useState<Effort>(initialMode === 'masterplan' ? 'high' : 'medium');
-  const [apply, setApply] = useState(false);
+  // Auto-apply by default: the user almost always wants additions and
+  // modifications to land in their tree without a confirmation step.
+  // We still pause for explicit approval whenever the patch *deletes*
+  // a file, since that's the one case where surprise is destructive.
+  // Setting `/apply off` re-introduces the universal review panel for
+  // users who want to inspect every patch.
+  const [apply, setApply] = useState(true);
   const [fast, setFast] = useState(false);
   // Prompt-injection enforcement policy. 'warn' (default) records
   // findings on the report but still runs the model; 'block' refuses
@@ -204,6 +217,11 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   const [securityPolicy, setSecurityPolicy] = useState<'warn' | 'block'>('warn');
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState('');
+  // Set to true the moment the user presses ESC during a run so the
+  // spinner row immediately swaps to "aborting…" - subprocesses can
+  // take a couple of seconds to actually exit even with SIGTERM, and
+  // that lag was reading as "ESC did nothing".
+  const [aborting, setAborting] = useState(false);
   // Animated spinner index + elapsed-time counter for the in-flight
   // progress line. Both update on intervals while `busy` is true and
   // are reset between runs.
@@ -224,14 +242,48 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   const logIdRef = useRef(0);
   // Pending prompt queued while a previous run was still in flight.
   // Submitted automatically once the current run finishes; mirrors
-  // Claude Code's "type ahead" behaviour.
+  // Claude Code's "type ahead" behaviour. Held in a ref to avoid
+  // racing with dispatch's finally block, plus mirrored into state
+  // so the UI can render an inline "queued ↑" chip above the
+  // chatbox - without that, the only confirmation was a system
+  // message in scrollback that often got pushed off-screen during
+  // a long run, making the keystroke feel like a no-op.
   const queuedRef = useRef<string | null>(null);
+  const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
   const [suggIdx, setSuggIdx] = useState(0);
   // Pending review (approve/discard/trust) artifact shown
   // automatically after a run that produced changes when apply=off
   // and the user hasn't already trusted edits for this session.
   const [reviewRun, setReviewRun] = useState<RecordedRun | null>(null);
   const [reviewChoice, setReviewChoice] = useState<'approve' | 'discard' | 'trust'>('approve');
+  // Currently-routed model + provider, populated by the agent
+  // mode's progress notifier the moment the router picks. The REPL
+  // stamps every log entry with a short label (e.g. `claude:opus-4`)
+  // so the user can see at a glance which engine is running each
+  // action - especially useful when handoffs swap models mid-run.
+  // Held in both state (for spinner-row rendering) and a ref (so
+  // log entries pushed from streaming callbacks don't race the
+  // setState commit).
+  const [currentRoute, setCurrentRoute] = useState<RouteRef | null>(null);
+  const currentRouteRef = useRef<RouteRef | null>(null);
+  // Running cumulative token / cost counter. Updated on every
+  // onUsage callback from the adapter; resets at the start of each
+  // dispatch. Keeps the user's bill visible as it accumulates
+  // rather than springing a number on them at the end.
+  const [runningUsage, setRunningUsage] = useState<{
+    tokensIn: number;
+    tokensOut: number;
+    costUsd: number;
+  }>({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
+  // Session-cumulative usage across every run since the REPL
+  // launched. Adds up the ending counters of completed runs; the
+  // status row shows it when idle so the user knows what they've
+  // burned this session.
+  const [sessionUsage, setSessionUsage] = useState<{
+    tokensIn: number;
+    tokensOut: number;
+    costUsd: number;
+  }>({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
 
   useEffect(() => {
     if (!busy) {
@@ -277,6 +329,26 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // an inline approve prompt; once set we auto-apply silently for
   // the rest of the REPL session (effectively `/apply on`).
   const [sessionTrustEdits, setSessionTrustEdits] = useState(false);
+  // Per-provider session ids captured from prior turns. We replay
+  // the entry that matches the routed provider on the next dispatch
+  // so the agent gets conversational memory across prompts (e.g.
+  // Claude Code rehydrates the prior conversation via `--resume`).
+  // A ref shadows the state so dispatch reads the freshest map even
+  // when fired from a stale closure (queued prompts, finally
+  // handlers).
+  const [resumeSessions, setResumeSessions] = useState<
+    Partial<Record<ProviderId, string>>
+  >({});
+  const resumeSessionsRef = useRef<Partial<Record<ProviderId, string>>>({});
+  // Pending interactive question from the model. When set, the
+  // previous run was aborted because Claude invoked
+  // `AskUserQuestion`; the REPL renders an answer panel and the
+  // user's next prompt is dispatched as the answer (with session
+  // resume). Held in a ref so the dispatch's onUserQuestion
+  // callback can stash it synchronously before aborting (state
+  // setters race the abort otherwise).
+  const [pendingQuestion, setPendingQuestion] = useState<AskUserQuestionPayload | null>(null);
+  const pendingQuestionRef = useRef<AskUserQuestionPayload | null>(null);
   // Highlighted row in the unified /setup manager. Indexes into the
   // flattened `managerRows` list (hosts first, then API providers).
   const [wizardPick, setWizardPick] = useState(0);
@@ -289,6 +361,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // 'yes' and 'no'; enter activates the highlighted one. 'y' / 'n' also
   // work as direct shortcuts for users who already know the answer.
   const [confirmChoice, setConfirmChoice] = useState<'yes' | 'no'>('yes');
+  // Trust dialog highlight state, identical UX to the confirm wizard:
+  // arrows move between yes/no, enter commits the highlighted choice.
+  const [trustChoice, setTrustChoice] = useState<'yes' | 'no'>('yes');
 
   // Flattened list of rows shown in /setup. Recomputed whenever the
   // user toggles a host or saves/removes a key so the checkboxes /
@@ -329,23 +404,56 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   }, [suggestions.length, suggIdx]);
 
   /**
+   * Short, terminal-friendly label for a route. Combines the
+   * "via" (typically the orchestrator: codex, claudeCode,
+   * anthropic, etc.) with the underlying model name so the user
+   * can tell apart `claudeCode:opus-4.1` and `anthropic:opus-4.1`
+   * at a glance. Returns undefined when the route hasn't been
+   * picked yet.
+   */
+  function formatRouteLabel(route: RouteRef | null): string | undefined {
+    if (!route) return undefined;
+    const via = route.via ?? route.provider;
+    // Anthropic / Claude Code resolved-model ids carry an 8-digit
+    // release-date suffix (`claude-sonnet-4-5-20250929`). The user
+    // wants the exact identifier on the right edge of every block,
+    // but the date noise pushes longer block names off-screen and
+    // doesn't disambiguate runs in any useful way (the version
+    // already does). Strip it for display only - the underlying
+    // route still carries the full string for the report.
+    const trimmed = route.model.replace(/-\d{8}$/, '');
+    return `${via}:${trimmed}`;
+  }
+
+  /**
    * Append a streaming text chunk to the live log. Consecutive
    * chunks coalesce into the trailing `text` entry so the rendered
    * markdown stays stable; a new `text` entry only starts when an
    * activity event has interrupted in between (which guarantees
    * arrival order in the visual log).
+   *
+   * Each text block carries a `routeLabel` so the UI can stamp
+   * which model produced it on the right edge - useful when a run
+   * hands off mid-stream (the new entry inherits the new route
+   * while existing ones keep their original stamp).
    */
   function appendLogText(chunk: string): void {
     if (!chunk) return;
     const log = liveLogRef.current;
     const last = log.length > 0 ? log[log.length - 1] : undefined;
+    const routeLabel = formatRouteLabel(currentRouteRef.current);
     if (last && last.kind === 'text') {
-      const merged: LogEntry = { id: last.id, kind: 'text', text: last.text + chunk };
+      const merged: LogEntry = {
+        id: last.id,
+        kind: 'text',
+        text: last.text + chunk,
+        routeLabel: last.routeLabel ?? routeLabel,
+      };
       liveLogRef.current = [...log.slice(0, -1), merged];
     } else {
       liveLogRef.current = [
         ...log,
-        { id: logIdRef.current++, kind: 'text', text: chunk },
+        { id: logIdRef.current++, kind: 'text', text: chunk, routeLabel },
       ];
     }
     setLiveLog(liveLogRef.current);
@@ -361,6 +469,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
    */
   function appendLogActivity(event: ActivityEvent): void {
     const log = liveLogRef.current;
+    const routeLabel = formatRouteLabel(currentRouteRef.current);
     if (event.kind === 'tool_result') {
       let target = -1;
       for (let i = log.length - 1; i >= 0; i--) {
@@ -384,6 +493,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
             description: event.tool,
             ok: event.ok,
             body: event.body,
+            routeLabel,
           },
         ];
       }
@@ -395,6 +505,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
           kind: 'tool',
           tool: event.tool,
           description: event.description,
+          routeLabel,
         },
       ];
     } else {
@@ -440,20 +551,16 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   }
 
   /**
-   * Single-line status banner for what happened to the run's
-   * changes. The detailed per-file stats live in the dedicated
-   * `changes` history item; this is just the verb summary so the
-   * user can tell apply/discard/applied/pending at a glance.
+   * Persist the model's interactive question to scrollback as a
+   * styled history item so the user can read it (and reference it)
+   * even after the next prompt is dispatched and pushes the live
+   * area down. The accompanying inline hint above the chatbox is
+   * what tells the user "your reply is the answer"; this is the
+   * record of what was asked.
    */
-  function pushApplyBanner(report: {
-    filesChanged?: string[];
-    applied?: boolean;
-  }): void {
-    const n = report.filesChanged?.length ?? 0;
-    if (n === 0) return;
-    if (report.applied) {
-      pushSystem(`  applied ${n} file(s)`, 'success');
-    }
+  function pushQuestion(payload: AskUserQuestionPayload): void {
+    if (payload.questions.length === 0) return;
+    appendHistory({ id: idRef.current++, kind: 'question', payload });
   }
 
   /**
@@ -488,17 +595,48 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     setPhase('preparing');
     liveLogRef.current = [];
     setLiveLog([]);
+    // Each dispatch starts with a fresh per-run usage counter so the
+    // displayed numbers represent THIS turn, not the session total
+    // (which we track separately and show on idle).
+    setRunningUsage({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
+    // Don't blank `currentRoute` here - the previous route is still a
+    // good default for any text we render before agent/run/start
+    // arrives (e.g. a quick error or the spinner row). The notifier
+    // will overwrite it as soon as the router picks for this turn.
     const controller = new AbortController();
     abortRef.current = controller;
-    // Auto-apply when the user has said "trust this session"; this
-    // is identical to having `/apply on`. Otherwise honour whatever
-    // toggle the user has set explicitly.
-    const effectiveApply = apply || sessionTrustEdits;
+    // ALWAYS run the agent with apply=false so the diff is persisted
+    // to .coderouter/runs/<id>/changes.patch and the worktree is
+    // discarded cleanly. We then decide what to do with the artifact
+    // here in the REPL (auto-apply / show approve panel) using the
+    // patch contents - this lets us peek at the patch and
+    // conditionally pause for deletions before anything lands in
+    // the host repo. The user-facing `/apply` toggle still controls
+    // intent; it just no longer drives the underlying merge.
+    const userIntendsAutoApply = apply || sessionTrustEdits;
     const notifier: ProgressNotifier = (u) => {
       // Friendly label per phase; ignore the `stage` (`start`/`done`)
       // because the animated spinner already conveys "still running"
       // and bouncing between "running ✓" / "running" reads as flicker.
       setPhase(describeProgress(u.phase));
+      // Capture route info from the agent mode's first progress beat
+      // so we can stamp every log entry with the model that produced
+      // it. The shape matches RouteRef but we duck-type defensively
+      // since `data` is a free-form Record.
+      const data = u.data;
+      if (data && typeof data === 'object' && 'route' in data) {
+        const r = (data as { route?: Partial<RouteRef> }).route;
+        if (r && r.provider && r.model) {
+          const next: RouteRef = {
+            provider: r.provider,
+            model: r.model,
+            rationale: r.rationale ?? '',
+            via: r.via ?? r.provider,
+          };
+          currentRouteRef.current = next;
+          setCurrentRoute(next);
+        }
+      }
     };
     try {
       const { report, store } = await executeRun({
@@ -506,9 +644,16 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         cwd,
         mode: m,
         effort,
-        apply: effectiveApply,
+        apply: false,
         fast,
         injectionPolicy: securityPolicy,
+        // Replay session ids captured from prior turns. The agent
+        // mode picks the entry that matches the routed provider and
+        // forwards it as `resumeSessionId`, giving the model
+        // continuity across REPL prompts. Read via ref so a queued
+        // prompt that fires after this turn's session id was
+        // recorded still picks it up.
+        resumeSessions: resumeSessionsRef.current,
         progress: { notifier, close: () => {} },
         signal: controller.signal,
         onChunk: (chunk) => {
@@ -520,7 +665,37 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         onActivity: (event) => {
           appendLogActivity(event);
         },
+        onUsage: (usage) => {
+          setRunningUsage(usage);
+        },
+        // The model fired `AskUserQuestion`. Stash the payload and
+        // abort the run immediately - the headless `claude -p`
+        // subprocess can't accept an answer back, and if we let it
+        // run to completion it just makes a fallback guess. We
+        // surface the question via an inline panel below; the
+        // user's next prompt is dispatched as the answer with
+        // session resume so Claude sees the answer in context.
+        onUserQuestion: (payload) => {
+          pendingQuestionRef.current = payload;
+          setPendingQuestion(payload);
+          abortRef.current?.abort();
+        },
       });
+
+      // Persist the adapter's session id (Claude Code's `session_id`,
+      // etc.) keyed by provider so the next dispatch can replay it
+      // via `--resume <id>`. We update the ref synchronously so a
+      // typed-ahead prompt that fires immediately after this run
+      // picks up the new id without waiting for React to flush
+      // setState.
+      if (report.sessionId && report.sessionProvider) {
+        const next = {
+          ...resumeSessionsRef.current,
+          [report.sessionProvider]: report.sessionId,
+        };
+        resumeSessionsRef.current = next;
+        setResumeSessions(next);
+      }
 
       // Surface prompt-injection findings before rendering the answer
       // so the operator sees them clearly even if they later scroll
@@ -536,23 +711,58 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       }
 
       // Commit the unified live log (text + tool calls in arrival
-      // order) to scrollback as a single ordered entry. If streaming
-      // didn't fire at all (HTTP adapter without SSE) but the report
-      // carries text, fall back to a synthetic single-text-entry log
-      // so the user still sees the answer.
+      // order) to scrollback as a single ordered entry.
+      //
+      // ORDERING IS LOAD-BEARING here. We must clear `liveLog` and
+      // flip `busy` to false BEFORE pushing the frozen copy to
+      // history; otherwise React can paint an intermediate frame
+      // where both the live `<LogStream>` (still rendering because
+      // busy=true and liveLog is non-empty) AND the freshly
+      // appended history item (the same entries) are visible at
+      // once. Ink's `<Static>` commits whatever it sees that frame
+      // to scrollback permanently, leaving a duplicate copy of the
+      // entire activity log pinned in the terminal.
       const finalLog = liveLogRef.current;
+      // Best-effort route label for the synthetic fallback: prefer
+      // the live route the agent emitted, fall back to whatever the
+      // report's `routes` array carries (modes that don't stream
+      // still fill that in at the end).
+      const fallbackRouteLabel =
+        formatRouteLabel(currentRouteRef.current) ??
+        (report.routes && report.routes.length > 0
+          ? formatRouteLabel(report.routes[0]!)
+          : undefined);
+
+      liveLogRef.current = [];
+      setLiveLog([]);
+      setBusy(false);
+      setPhase('');
+
       if (controller.signal.aborted) {
         if (finalLog.length > 0) pushLog(finalLog);
-        pushSystem('  interrupted', 'warn');
+        // If we aborted because the model asked a question, the
+        // panel below is doing the user-facing work; don't
+        // double-message with a plain "interrupted" line.
+        if (pendingQuestionRef.current) {
+          pushQuestion(pendingQuestionRef.current);
+        } else {
+          pushSystem('  interrupted', 'warn');
+        }
       } else if (finalLog.length > 0) {
         pushLog(finalLog);
       } else if (report.text && report.text.trim()) {
-        pushLog([{ id: logIdRef.current++, kind: 'text', text: report.text }]);
+        pushLog([
+          {
+            id: logIdRef.current++,
+            kind: 'text',
+            text: report.text,
+            routeLabel: fallbackRouteLabel,
+          },
+        ]);
       }
 
-      // Compact per-file change summary. Pulled from the persisted
-      // patch artifact when one exists (apply=off path) and from the
-      // ad-hoc `diff` when not (apply=on, worktree merged).
+      // Compact per-file change summary, plus a deletion check used
+      // below to decide whether we can auto-apply silently.
       let postRunArtifact: RecordedRun | null = null;
       if (report.artifactDir) {
         postRunArtifact = loadArtifact(report.artifactDir);
@@ -560,6 +770,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       if (postRunArtifact && postRunArtifact.fileStats.length > 0) {
         pushChanges(postRunArtifact.fileStats);
       }
+      const hasDeletions = postRunArtifact?.fileStats.some((f) => f.deleted) ?? false;
 
       // Validators / citations / escalation hints still live in the
       // report footer; the answer body has already been streamed.
@@ -571,24 +782,71 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       } as typeof report);
       if (footer.trim()) pushReport(footer);
 
-      if (!controller.signal.aborted) {
-        pushApplyBanner(report);
-      }
-
-      // If the run produced changes that weren't auto-applied, open
-      // the inline approve prompt (small three-button panel). When
-      // `sessionTrustEdits` is on we already passed apply=true above
-      // and won't reach this branch.
+      // Decide what to do with the changes:
+      //   1. No artifact / no files → nothing to do.
+      //   2. Aborted → leave artifact on disk, user can `/accept`.
+      //   3. User intends auto-apply AND no deletions → apply
+      //      silently and tell the user via a banner.
+      //   4. Otherwise (deletions present, or `/apply off`) → show
+      //      the inline approve panel so the user explicitly
+      //      consents before anything destructive happens.
       if (
         !controller.signal.aborted &&
-        report.applied === false &&
-        (report.filesChanged?.length ?? 0) > 0 &&
-        postRunArtifact
+        postRunArtifact &&
+        postRunArtifact.fileStats.length > 0
       ) {
-        setReviewRun(postRunArtifact);
-        setReviewChoice('approve');
-        setWizardStep('review');
+        if (userIntendsAutoApply && !hasDeletions) {
+          const result = applyArtifact(cwd, postRunArtifact);
+          if (result.ok) {
+            const note = result.strategy === '3way' ? ' (with 3-way merge)' : '';
+            pushSystem(
+              `  applied ${postRunArtifact.fileStats.length} file(s)${note}`,
+              'success',
+            );
+            try {
+              discardArtifact(postRunArtifact);
+            } catch {
+              // best-effort
+            }
+          } else {
+            // Apply failed (context drift, conflict, etc.) - keep the
+            // artifact on disk and surface the approve panel so the
+            // user can either retry manually or discard.
+            pushSystem(
+              `  could not auto-apply: ${result.error}\n  patch is preserved at ${postRunArtifact.patchPath}`,
+              'warn',
+            );
+            setReviewRun(postRunArtifact);
+            setReviewChoice('approve');
+            setWizardStep('review');
+          }
+        } else {
+          if (hasDeletions && userIntendsAutoApply) {
+            const deleted = postRunArtifact.fileStats
+              .filter((f) => f.deleted)
+              .map((f) => f.file);
+            const head = deleted.slice(0, 3).join(', ');
+            const more = deleted.length > 3 ? ` +${deleted.length - 3} more` : '';
+            pushSystem(
+              `  pause: this run deletes ${deleted.length} file(s) - ${head}${more}`,
+              'warn',
+            );
+          }
+          setReviewRun(postRunArtifact);
+          setReviewChoice('approve');
+          setWizardStep('review');
+        }
       }
+
+      // Roll this run's authoritative numbers (from the final
+      // report - more accurate than the streaming estimate the
+      // adapter fed us) into the session-cumulative counter we
+      // show in the idle status row.
+      setSessionUsage((s) => ({
+        tokensIn: s.tokensIn + (report.tokensIn || 0),
+        tokensOut: s.tokensOut + (report.tokensOut || 0),
+        costUsd: s.costUsd + (report.costUsd || 0),
+      }));
 
       try {
         store.db.close();
@@ -602,7 +860,15 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         pushLog(liveLogRef.current);
       }
       if (controller.signal.aborted) {
-        pushSystem('  interrupted', 'warn');
+        // Same interrupted-vs-question distinction as the success
+        // branch above: when the abort came from `AskUserQuestion`
+        // the panel does the talking, so don't push a generic
+        // "interrupted" line on top of it.
+        if (pendingQuestionRef.current) {
+          pushQuestion(pendingQuestionRef.current);
+        } else {
+          pushSystem('  interrupted', 'warn');
+        }
       } else {
         pushSystem(`  error: ${(err as Error).message}`, 'error');
       }
@@ -612,11 +878,16 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       setLiveLog([]);
       setBusy(false);
       setPhase('');
+      setAborting(false);
       // If the user typed-ahead while the previous run was in flight,
       // fire it now. setTimeout ensures the in-flight setState calls
-      // above have committed before we start the next dispatch.
+      // above have committed before we start the next dispatch. We
+      // also clear the visible queue chip in the same tick so the
+      // user sees their typed-ahead prompt transition cleanly into
+      // a fresh run rather than briefly flashing both states.
       const queued = queuedRef.current;
       queuedRef.current = null;
+      setQueuedPrompt(null);
       if (queued) {
         setTimeout(() => {
           void submit(queued);
@@ -639,6 +910,23 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
    * In every case we close the review wizard and return to idle so
    * the user can keep typing immediately.
    */
+  /**
+   * Persist trust for the current directory and advance the wizard
+   * to the next step (or `idle` if the user already has a provider
+   * configured). Tolerates persistence failures - the user just gets
+   * re-prompted next time, no need to block the session.
+   */
+  function commitTrust(): void {
+    try {
+      trustDirectory(cwd);
+    } catch {
+      // best-effort
+    }
+    setTrusted(true);
+    setWizardStep(setupState.configured ? 'idle' : 'confirm');
+    pushSystem(`  trusted ${cwd}`, 'success');
+  }
+
   function resolveReview(choice: 'approve' | 'discard' | 'trust'): void {
     const run = reviewRun;
     if (!run) {
@@ -816,6 +1104,58 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         if (summary) pushSystem(`  scan: ${summary}`, 'warn');
         return;
       }
+      case 'models': {
+        if (!process.env.OPENROUTER_API_KEY) {
+          pushSystem(
+            '  /models browses the OpenRouter catalog. set OPENROUTER_API_KEY (or run /setup) first.',
+            'warn',
+          );
+          return;
+        }
+        try {
+          const apiKey = process.env.OPENROUTER_API_KEY;
+          const search = arg.trim() || undefined;
+          const all = await agent.openrouter.listOpenRouterToolCapableModels({
+            apiKey,
+            search,
+          });
+          if (all.length === 0) {
+            pushSystem(
+              search
+                ? `  no tool-capable models match '${search}'`
+                : '  no tool-capable models found in the OpenRouter catalog',
+              'warn',
+            );
+            return;
+          }
+          const head = all.slice(0, 30);
+          const lines = [
+            `  openrouter tool-capable models${search ? ` matching '${search}'` : ''} (showing ${head.length}/${all.length}):`,
+          ];
+          for (const m of head) {
+            const inP = agent.openrouter.pricePer1MIn(m).toFixed(2);
+            const outP = agent.openrouter.pricePer1MOut(m).toFixed(2);
+            const ctx =
+              m.context_length >= 1_000_000
+                ? `${(m.context_length / 1_000_000).toFixed(1)}M`
+                : `${Math.round(m.context_length / 1000)}k`;
+            lines.push(`    ${m.id.padEnd(48)} ${ctx.padEnd(6)} $${inP}/$${outP} per 1M`);
+          }
+          lines.push(
+            `  use any id with: coderouter agent --route openrouter_agent,<model> ...`,
+          );
+          if (all.length > head.length) {
+            lines.push(`  ... +${all.length - head.length} more (refine with /models <search>)`);
+          }
+          pushSystem(lines.join('\n'));
+        } catch (err) {
+          pushSystem(
+            `  failed to fetch openrouter catalog: ${(err as Error).message}`,
+            'warn',
+          );
+        }
+        return;
+      }
       case 'security': {
         if (arg === 'warn' || arg === 'block') {
           setSecurityPolicy(arg);
@@ -909,6 +1249,14 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
 
   async function submit(line: string): Promise<void> {
     pushUser(line);
+    // Once the user types their next reply, the prior question is
+    // resolved (regardless of whether the reply explicitly answered
+    // it - the model will see it in the resumed conversation either
+    // way). Clear synchronously via the ref so the dispatched
+    // `onUserQuestion` for THIS turn (if any) starts from a clean
+    // slate, and via setState so the inline hint disappears.
+    pendingQuestionRef.current = null;
+    setPendingQuestion(null);
     if (line.startsWith('/')) {
       const parts = line.slice(1).split(' ');
       const cmd = parts[0] ?? '';
@@ -934,20 +1282,32 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     // ~/.coderouter/trust.json; No/Esc/Ctrl+C exits the REPL since
     // we refuse to operate in an untrusted directory.
     if (wizardStep === 'trust') {
-      if (char === 'y' || char === 'Y' || key.return) {
-        try {
-          trustDirectory(cwd);
-        } catch {
-          // Persistence failure shouldn't block the session; the
-          // user just gets re-prompted next time.
-        }
-        setTrusted(true);
-        setWizardStep(setupState.configured ? 'idle' : 'confirm');
-        pushSystem(`  trusted ${cwd}`, 'success');
+      // Arrows + tab toggle the highlighted choice; enter commits it.
+      // Single-letter shortcuts (y/n) skip the highlight step and act
+      // immediately so power users don't have to navigate.
+      if (key.leftArrow || key.upArrow) {
+        setTrustChoice('yes');
+        return;
+      }
+      if (key.rightArrow || key.downArrow) {
+        setTrustChoice('no');
+        return;
+      }
+      if (key.tab) {
+        setTrustChoice((c) => (c === 'yes' ? 'no' : 'yes'));
+        return;
+      }
+      if (char === 'y' || char === 'Y') {
+        commitTrust();
         return;
       }
       if (char === 'n' || char === 'N' || key.escape) {
         exit();
+        return;
+      }
+      if (key.return) {
+        if (trustChoice === 'yes') commitTrust();
+        else exit();
         return;
       }
       return;
@@ -1121,7 +1481,11 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     // Normal command/prompt input. Enter submits when idle; while busy
     // it queues the prompt to fire after the in-flight run finishes
     // (so the chatbox below the streaming output reads like a real
-    // follow-up entry, not a dead element).
+    // follow-up entry, not a dead element). The queued prompt is
+    // mirrored into state so a visible chip renders right above the
+    // chatbox - the previous "queued: ..." system message kept
+    // getting pushed out of view during long runs and made it feel
+    // like the keystroke vanished.
     if (key.return) {
       const line = input.trim();
       if (!line) return;
@@ -1129,7 +1493,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       setCursor(0);
       if (busy) {
         queuedRef.current = line;
-        pushSystem(`  queued: ${line}  (will run when the current step finishes)`, 'info');
+        setQueuedPrompt(line);
       } else {
         void submit(line);
       }
@@ -1155,10 +1519,26 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       return;
     }
 
-    // Escape: cancels an in-flight run when busy; clears the input
-    // buffer otherwise. Keeps the two semantics from clashing.
+    // Escape semantics, in priority order:
+    //   1. If there's a queued prompt waiting, ESC clears the queue
+    //      first - that way the user can cancel a typo/mistake
+    //      without also killing the run that's currently producing
+    //      useful work.
+    //   2. Otherwise during a busy run ESC aborts the in-flight
+    //      subprocess (SIGTERM, escalated to SIGKILL after 2s).
+    //   3. Idle ESC clears the input buffer.
     if (key.escape) {
+      if (queuedRef.current !== null) {
+        queuedRef.current = null;
+        setQueuedPrompt(null);
+        return;
+      }
       if (busy) {
+        // Flip the UI to "aborting…" right away so the user sees
+        // their keystroke land. Actual subprocess exit is async -
+        // SIGTERM then SIGKILL after 2s grace - so without this
+        // feedback ESC felt like a no-op for several seconds.
+        setAborting(true);
         abortRef.current?.abort();
       } else {
         setInput('');
@@ -1224,17 +1604,32 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
             {item.kind === 'welcome' && (
               <Box flexDirection="column">
                 <WordmarkPanel />
-                {setupState.hosts.length > 0 && (
+                {/* The detected-hosts panel is part of first-run
+                    onboarding - it teaches the user which local
+                    CLIs were found and how to add API keys. Once
+                    they have at least one configured provider
+                    (host or API key) they've completed setup and
+                    don't need to see this box on every launch.
+                    StatusRow's `providers` chip already tells
+                    them what's active. */}
+                {!setupState.configured && setupState.hosts.length > 0 && (
                   <DetectedHostsPanel hosts={setupState.hosts} />
                 )}
                 <TipsPanel mode={mode} />
               </Box>
             )}
+            {/* Grey-bordered box around every user prompt so the
+                operator can scan their own messages at a glance and
+                tell them apart from system output, model narration,
+                and tool calls. We keep the leading `▸ ` glyph for
+                consistency with the live chatbox prefix. */}
             {item.kind === 'user' && (
-              <Text>
-                <Text color="green" bold>{'▸ '}</Text>
-                <Text bold>{item.text}</Text>
-              </Text>
+              <Box borderStyle="round" borderColor="gray" paddingX={1}>
+                <Text>
+                  <Text color="green" bold>{'▸ '}</Text>
+                  <Text bold>{item.text}</Text>
+                </Text>
+              </Box>
             )}
             {item.kind === 'system' && (
               <Text
@@ -1250,6 +1645,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
             )}
             {item.kind === 'log' && <LogStream entries={item.entries} frozen />}
             {item.kind === 'changes' && <ChangesPanel stats={item.stats} />}
+            {item.kind === 'question' && <QuestionPanel payload={item.payload} />}
             {item.kind === 'report' && (
               <Box flexDirection="column">
                 {item.text.split('\n').map((l, i) => (
@@ -1261,19 +1657,36 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         )}
       </Static>
 
-      {/* Single unified live log: text streamed by the model and
-          tool calls it makes are interleaved here in arrival order
-          so the user reads one continuous narration instead of two
-          separate panels. Cleared between runs and committed to
-          scrollback as a frozen 'log' history item when the run
-          completes. */}
+      {/* The "thread" area: live log first (text streamed by the
+          model + tool calls in arrival order), then the spinner +
+          esc-hint row. Both sit ABOVE the chatbox so the chatbox
+          is always free to accept input - even mid-run. Mirrors
+          Claude Code where the spinner reads as a thread entry,
+          not a footer attached to the input. */}
       {busy && liveLog.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <LogStream entries={liveLog} />
         </Box>
       )}
+      {busy && (
+        <Box flexDirection="column" marginBottom={1}>
+          <ProgressLine
+            frame={spinFrame}
+            phase={aborting ? 'aborting…' : phase}
+            elapsedMs={elapsedMs}
+            routeLabel={formatRouteLabel(currentRoute) ?? undefined}
+            usage={runningUsage}
+            aborting={aborting}
+          />
+          <Box paddingX={1}>
+            <Text color="gray" dimColor>
+              {aborting ? 'sending SIGTERM, force-kill in 2s' : 'esc to interrupt'}
+            </Text>
+          </Box>
+        </Box>
+      )}
 
-      {wizardStep === 'trust' && <TrustPanel cwd={cwd} />}
+      {wizardStep === 'trust' && <TrustPanel cwd={cwd} choice={trustChoice} />}
       {wizardStep === 'confirm' && <WizardConfirmPanel choice={confirmChoice} />}
       {wizardStep === 'pick' && (
         <SetupManagerPanel rows={managerRows} selectedIdx={wizardPick} />
@@ -1289,30 +1702,37 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         <SuggestionsList items={suggestions} selectedIdx={suggIdx} />
       )}
 
-      {/* The chatbox + status/hint footer are intentionally hidden while
-          the wizard owns input. Bringing them back at this point would
-          just confuse — the wizard panels already carry their own hints. */}
+      {/* The chatbox + status footer are intentionally hidden while
+          the wizard owns input. Bringing them back at this point
+          would just confuse — the wizard panels already carry
+          their own hints. */}
       {wizardStep === 'idle' && (
         <>
           {!setupState.configured && !busy && <NoProviderReminder />}
+          {/* Persistent inline hint while a model question is open.
+              The full question is in scrollback as a `question`
+              history item; this is just a one-liner reminding the
+              user that anything they type next is the answer. */}
+          {pendingQuestion && !busy && (
+            <Box paddingX={1}>
+              <Text color="yellow" bold>{'? answering: '}</Text>
+              <Text>{truncateOneLine(pendingQuestion.questions[0]?.question ?? '', 80)}</Text>
+            </Box>
+          )}
+          {queuedPrompt && (
+            <Box paddingX={1}>
+              <Text color="cyan" bold>{'↑ queued '}</Text>
+              <Text>{truncateOneLine(queuedPrompt, 80)}</Text>
+              <Text color="gray" dimColor>{'   esc to clear'}</Text>
+            </Box>
+          )}
           <InputBox
             value={input}
             cursor={cursor}
             busy={busy}
             configured={setupState.configured}
           />
-          {busy ? (
-            // While running we collapse the footer to just the
-            // spinner + a single "esc to interrupt" hint. Mirrors
-            // Claude Code's UX and avoids the visual noise of a
-            // settings row the user can't change anyway.
-            <Box flexDirection="column">
-              <ProgressLine frame={spinFrame} phase={phase} elapsedMs={elapsedMs} />
-              <Box paddingX={1}>
-                <Text color="gray" dimColor>esc to interrupt</Text>
-              </Box>
-            </Box>
-          ) : (
+          {!busy && (
             <Box marginTop={1} paddingX={1} flexDirection="column">
               <StatusRow
                 mode={mode}
@@ -1323,7 +1743,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
                 apiKeys={setupState.apiKeys}
                 hosts={setupState.hosts}
               />
-              <HintRow />
+              {(sessionUsage.tokensIn > 0 || sessionUsage.tokensOut > 0) && (
+                <Text color="gray">{`session ${formatUsage(sessionUsage)}`}</Text>
+              )}
             </Box>
           )}
         </>
@@ -1368,7 +1790,16 @@ function LogStream({
           flexDirection="column"
           marginTop={idx === 0 ? 0 : 1}
         >
-          {entry.kind === 'text' && <MarkdownBlock text={entry.text} />}
+          {entry.kind === 'text' && (
+            <Box flexDirection="column">
+              {entry.routeLabel && (
+                <Box justifyContent="flex-end">
+                  <Text color="gray" dimColor>{entry.routeLabel}</Text>
+                </Box>
+              )}
+              <MarkdownBlock text={entry.text} />
+            </Box>
+          )}
           {entry.kind === 'thinking' && (
             <Text color="gray" italic dimColor={frozen}>
               {`  … ${entry.text}`}
@@ -1404,10 +1835,15 @@ function ToolBlock({
   const headerColor = entry.ok === false ? 'red' : undefined;
   return (
     <Box flexDirection="column">
-      <Text dimColor={frozen}>
-        <Text color={glyphColor} bold>{`${glyph} `}</Text>
-        <Text bold color={headerColor}>{entry.description}</Text>
-      </Text>
+      <Box justifyContent="space-between">
+        <Text dimColor={frozen}>
+          <Text color={glyphColor} bold>{`${glyph} `}</Text>
+          <Text bold color={headerColor}>{entry.description}</Text>
+        </Text>
+        {entry.routeLabel && (
+          <Text color="gray" dimColor>{entry.routeLabel}</Text>
+        )}
+      </Box>
       {entry.body && entry.body.trim().length > 0 && (
         <ToolBlockBody body={entry.body} ok={entry.ok !== false} />
       )}
@@ -1496,6 +1932,62 @@ function ChangesPanel({ stats }: { stats: FileStats[] }): React.ReactElement {
 }
 
 /**
+ * Renders a paused-on-question panel. When Claude Code fires its
+ * `AskUserQuestion` tool, the headless `claude -p` subprocess can't
+ * accept the answer back over its own channel, so we abort the run
+ * and surface the question here instead. The user's next prompt is
+ * dispatched as the answer (with `--resume <session_id>` so Claude
+ * sees it in context). Numbered options are listed for readability,
+ * but the user is free to type a free-form reply too.
+ */
+function QuestionPanel({
+  payload,
+}: {
+  payload: AskUserQuestionPayload;
+}): React.ReactElement {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+      <Text color="yellow" bold>
+        {payload.questions.length === 1
+          ? 'the agent has a question:'
+          : `the agent has ${payload.questions.length} questions:`}
+      </Text>
+      {payload.questions.map((q, qi) => (
+        <Box key={`q-${qi}`} flexDirection="column" marginTop={qi > 0 ? 1 : 0}>
+          <Text bold>
+            {payload.questions.length > 1 ? `Q${qi + 1}. ` : ''}
+            {q.question}
+          </Text>
+          {q.options && q.options.length > 0 && (
+            <Box flexDirection="column" paddingLeft={2}>
+              {q.options.map((opt, oi) => (
+                <Text key={`o-${qi}-${oi}`}>
+                  <Text color="cyan">{`${oi + 1}. `}</Text>
+                  <Text bold>{opt.label}</Text>
+                  {opt.description ? (
+                    <Text color="gray">{`  — ${opt.description}`}</Text>
+                  ) : null}
+                </Text>
+              ))}
+            </Box>
+          )}
+          {q.multiSelect && (
+            <Text color="gray" italic>
+              {'  (select one or more)'}
+            </Text>
+          )}
+        </Box>
+      ))}
+      <Box marginTop={1}>
+        <Text color="gray">
+          {'reply with your answer; the conversation will resume with full context'}
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+/**
  * Compact post-run approve panel. Three inline buttons; the
  * selected one is highlighted. Replaces the giant raw-diff modal
  * the previous version used so users can't fall into "just smash
@@ -1556,30 +2048,36 @@ function ApproveButton({
 /**
  * Directory-trust prompt shown on first launch in a workspace the
  * user hasn't explicitly opted into. Mirrors Cursor/Claude Code's
- * "Do you trust this folder?" dialog. y/Enter persists the answer
- * to ~/.coderouter/trust.json and continues; n/Esc exits the REPL.
+ * "Do you trust this folder?" dialog but rendered as a plain inline
+ * paragraph rather than a bordered modal - the surrounding REPL
+ * already has too many boxes and the ergonomics are the same: y
+ * grants and persists, n / esc quits.
  */
-function TrustPanel({ cwd }: { cwd: string }): React.ReactElement {
+function TrustPanel({
+  cwd,
+  choice,
+}: {
+  cwd: string;
+  choice: 'yes' | 'no';
+}): React.ReactElement {
   return (
-    <Box
-      borderStyle="round"
-      borderColor="yellow"
-      paddingX={2}
-      paddingY={1}
-      marginBottom={1}
-      flexDirection="column"
-    >
-      <Text bold color="yellow">! Trust this directory?</Text>
-      <Box marginTop={1} flexDirection="column">
-        <Text>{`  ${cwd}`}</Text>
-        <Text color="gray">
-          {'  CodeRouter will read files here and (when you approve) run agents that edit them.'}
-        </Text>
+    <Box flexDirection="column" paddingX={1} marginBottom={1}>
+      <Text bold color="yellow">{'!  Trust this directory?'}</Text>
+      <Text>{`   ${cwd}`}</Text>
+      <Text color="gray">
+        {'   CodeRouter will read files here and (when you approve) run agents that edit them.'}
+      </Text>
+      <Box marginTop={1}>
+        <Text>   </Text>
+        <ConfirmButton label="Yes, trust" selected={choice === 'yes'} />
+        <Text>   </Text>
+        <ConfirmButton label="No, quit" selected={choice === 'no'} />
       </Box>
       <Box marginTop={1}>
-        <Text color="green" bold>{'  [y] yes, trust this directory'}</Text>
+        <Text color="gray">
+          ← → to choose · enter to confirm · y / n for shortcut · esc to quit
+        </Text>
       </Box>
-      <Text color="gray">{'  [n / esc] no, quit'}</Text>
     </Box>
   );
 }
@@ -1996,22 +2494,40 @@ function StatusRow({
     ...hosts.filter((h) => h.enabled).map((h) => h.cli),
     ...apiKeys,
   ];
+  // Color-coordinated values - each param gets a distinct hue so the
+  // eye can find a specific setting without reading labels:
+  //   mode      -> yellow  (the primary axis: agent / plan / debug)
+  //   effort    -> cyan    (intensity-ish; same family for low/med/high)
+  //   apply     -> green on,   gray off
+  //   fast      -> blue on,    gray off
+  //   security  -> yellow warn, red block (warn = relaxed, block = strict)
+  //   providers -> green when something is configured, yellow when none
+  // Labels stay gray (dim) so the bold value chips pop.
   return (
     <Box>
       <Text color="gray">mode </Text>
-      <Text bold>{mode}</Text>
+      <Text bold color="yellow">{mode}</Text>
       <Sep />
       <Text color="gray">effort </Text>
-      <Text bold>{effort}</Text>
+      <Text bold color="cyan">{effort}</Text>
       <Sep />
       <Text color="gray">apply </Text>
-      <Text bold color={apply ? 'green' : undefined}>{apply ? 'on' : 'off'}</Text>
+      <Text bold color={apply ? 'green' : 'gray'}>{apply ? 'on' : 'off'}</Text>
       <Sep />
       <Text color="gray">fast </Text>
-      <Text bold color={fast ? 'green' : undefined}>{fast ? 'on' : 'off'}</Text>
-      <Sep />
-      <Text color="gray">security </Text>
-      <Text bold color={security === 'block' ? 'green' : undefined}>{security}</Text>
+      <Text bold color={fast ? 'blue' : 'gray'}>{fast ? 'on' : 'off'}</Text>
+      {/* Security only shows when the policy is something other
+          than the default (`warn`). Most users never touch it, and
+          rendering "security warn" on every line was just noise.
+          When they flip to `/security block` the chip pops back in
+          (red) so they know they're in strict mode. */}
+      {security !== 'warn' && (
+        <>
+          <Sep />
+          <Text color="gray">security </Text>
+          <Text bold color="red">{security}</Text>
+        </>
+      )}
       <Sep />
       <Text color="gray">providers </Text>
       <Text bold color={labels.length > 0 ? 'green' : 'yellow'}>
@@ -2021,36 +2537,63 @@ function StatusRow({
   );
 }
 
-function HintRow(): React.ReactElement {
-  return (
-    <Text color="gray">
-      tab to complete   ·   /   for commands   ·   esc to clear
-    </Text>
-  );
-}
-
 function ProgressLine({
   frame,
   phase,
   elapsedMs,
+  routeLabel,
+  usage,
+  aborting,
 }: {
   frame: number;
   phase: string;
   elapsedMs: number;
+  routeLabel?: string;
+  usage?: { tokensIn: number; tokensOut: number };
+  aborting?: boolean;
 }): React.ReactElement {
   // Single dim line sitting directly under the input box. Mirrors the
   // Claude Code spinner: rotating braille frame + a verb + an elapsed
-  // counter that ticks up while the run is in flight. We keep
-  // everything inline (no Box border) so the layout doesn't shift when
-  // the spinner appears/disappears.
+  // counter that ticks up while the run is in flight, plus optional
+  // model + token/cost segments that the adapters populate as the
+  // turn progresses. Everything stays inline (no Box border) so the
+  // layout doesn't shift when the spinner appears/disappears.
   const label = phase || 'thinking';
+  const showUsage = usage && (usage.tokensIn > 0 || usage.tokensOut > 0);
+  // While aborting, swap the green spinner glyph for a yellow one
+  // so the user gets an unmistakable "we heard you, shutting down"
+  // signal even before the subprocess has finished exiting.
+  const spinnerColor = aborting ? 'yellow' : 'green';
+  const labelColor = aborting ? 'yellow' : 'gray';
   return (
     <Box paddingX={1}>
-      <Text color="green">{SPINNER_FRAMES[frame % SPINNER_FRAMES.length]}</Text>
-      <Text color="gray">{`  ${label}`}</Text>
+      <Text color={spinnerColor}>{SPINNER_FRAMES[frame % SPINNER_FRAMES.length]}</Text>
+      <Text color={labelColor}>{`  ${label}`}</Text>
       <Text color="gray" dimColor>{`   ·   ${formatElapsed(elapsedMs)}`}</Text>
+      {routeLabel && !aborting && (
+        <Text color="gray" dimColor>{`   ·   ${routeLabel}`}</Text>
+      )}
+      {showUsage && !aborting && (
+        <Text color="gray" dimColor>{`   ·   ${formatUsage(usage!)}`}</Text>
+      )}
     </Box>
   );
+}
+
+/**
+ * Compact "tokens · <in> in · <out> out" format used in the spinner
+ * row and idle status row. Cost is intentionally omitted - the
+ * shell-agent providers (Codex, Claude Code) don't bill us per
+ * token anyway (they consume the user's existing subscription) so
+ * a $-figure here was misleading at best. Token counts use comma
+ * separators above 999 so the user can read them at a glance.
+ */
+function formatUsage(usage: {
+  tokensIn: number;
+  tokensOut: number;
+}): string {
+  const fmt = (n: number) => n.toLocaleString('en-US');
+  return `tokens  ·  ${fmt(usage.tokensIn)} in  ·  ${fmt(usage.tokensOut)} out`;
 }
 
 function formatElapsed(ms: number): string {
@@ -2060,6 +2603,18 @@ function formatElapsed(ms: number): string {
   const m = Math.floor(s / 60);
   const rem = Math.floor(s % 60);
   return `${m}m${rem.toString().padStart(2, '0')}s`;
+}
+
+/**
+ * Squashes a multi-line prompt to a single line and clips to a max
+ * length so the queued-prompt chip above the chatbox doesn't blow
+ * up the layout when the user pastes a paragraph. Newlines become
+ * `↵` so it's still visible something multi-line is queued.
+ */
+function truncateOneLine(s: string, max: number): string {
+  const flat = s.replace(/\s*\n\s*/g, ' ↵ ').trim();
+  if (flat.length <= max) return flat;
+  return `${flat.slice(0, max - 1)}…`;
 }
 
 function renderInputWithCursor(value: string, cursor: number): React.ReactElement {

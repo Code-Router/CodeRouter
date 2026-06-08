@@ -21,6 +21,8 @@ export default defineConfig({
     'src/transformers/index.ts',
     'src/providers/index.ts',
     'src/workflows/index.ts',
+    'src/agent/index.ts',
+    'src/catalog/index.ts',
   ],
   format: ['esm'],
   dts: true,

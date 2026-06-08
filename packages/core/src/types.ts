@@ -45,7 +45,17 @@ export type ProviderId =
   | 'openai_compat'
   | 'ollama'
   | 'codex'
-  | 'claude_code';
+  | 'claude_code'
+  /**
+   * First-party CodeRouter coding agent that runs against any
+   * OpenAI-tool-calling-compatible chat/completions backend
+   * (OpenRouter, OpenAI direct, Groq, DeepSeek, etc.). Implements
+   * its own Read/Write/Edit/Bash/Glob/Grep/AskUserQuestion tool
+   * loop so users with only an API key get an editing agent
+   * comparable to Claude Code / Codex - just driven by a remote
+   * API instead of a local CLI.
+   */
+  | 'coderouter_agent';
 
 export type AdapterCapabilities = {
   canEdit: boolean;
@@ -58,7 +68,7 @@ export type AdapterCapabilities = {
   pricePer1MIn: number;
   pricePer1MOut: number;
   contextWindow: number;
-  family: 'shell-agent' | 'api-model';
+  family: 'shell-agent' | 'api-model' | 'agent-loop';
 };
 
 export type RouteRef = {

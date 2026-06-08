@@ -18,6 +18,7 @@ export * as transformers from './transformers/index.js';
 export * as providers from './providers/index.js';
 export * as workflows from './workflows/index.js';
 export * as catalog from './catalog/index.js';
+export * as agent from './agent/index.js';
 
 // Convenience top-level re-exports of the most commonly used symbols.
 // Mirrors what the CLI, MCP server, and eval harness import.
@@ -28,8 +29,12 @@ export type { ProgressNotifier, ProgressUpdate } from './modes/progress.js';
 export type { Report } from './report/types.js';
 export type { Store } from './store/index.js';
 export type { Citation } from './types.js';
-export type { Classification, TaskType, Effort, Mode, RouteRef } from './types.js';
-export type { ActivityEvent } from './adapters/types.js';
+export type { Classification, TaskType, Effort, Mode, ProviderId, RouteRef } from './types.js';
+export type {
+  ActivityEvent,
+  AskUserQuestionEntry,
+  AskUserQuestionPayload,
+} from './adapters/types.js';
 export {
   ClassifierCascade,
   loadSeedCorpus,

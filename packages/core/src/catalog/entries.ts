@@ -231,10 +231,10 @@ export const CATALOG: Catalog = [
   },
 
   // -----------------------------------------------------------------
-  // OpenRouter (aggregator) - rank these slightly worse than native
-  // APIs for the same backing model so we prefer native when keys
-  // are configured for both. The aggregator's job is to be the
-  // catch-all when the user only set up an OpenRouter key.
+  // OpenRouter (aggregator) - chat-only entries used for plan / debug
+  // / non-editing flows. Ranked slightly worse than native APIs for
+  // the same backing model so we prefer native when keys are
+  // configured for both.
   // -----------------------------------------------------------------
   {
     provider: 'openrouter',
@@ -245,23 +245,71 @@ export const CATALOG: Catalog = [
   },
   {
     provider: 'openrouter',
-    model: 'anthropic/claude-opus-4-5',
-    contextWindow: 200_000,
-    capabilities: { tooluse: true },
-    intents: [{ intent: 'multi-file', rank: 2 }],
-  },
-  {
-    provider: 'openrouter',
-    model: 'anthropic/claude-sonnet-4-5',
-    contextWindow: 200_000,
-    capabilities: { tooluse: true },
-    intents: [{ intent: 'balanced-agent', rank: 2 }],
-  },
-  {
-    provider: 'openrouter',
     model: 'google/gemini-2.5-pro',
     contextWindow: 2_000_000,
     capabilities: { longContext: true, tooluse: true },
     intents: [{ intent: 'huge-context', rank: 2 }],
+  },
+
+  // -----------------------------------------------------------------
+  // OpenRouter via the first-party CodeRouter coding agent loop
+  // (`coderouter_agent` adapter). These are what the router picks
+  // for `balanced-agent` / `multi-file` intents when the user has
+  // only an OpenRouter API key - they implement the same
+  // Read/Write/Edit/Bash/Grep/Glob/AskUserQuestion tool surface as
+  // Claude Code, just driven by the chosen OpenRouter model.
+  //
+  // Ranked just below the local-CLI shell agents (Claude Code,
+  // Codex) so a user with both still gets the local-first flow,
+  // but a user with only an OpenRouter key gets a real editing
+  // agent instead of a Q&A reply.
+  // -----------------------------------------------------------------
+  {
+    provider: 'openrouter_agent',
+    model: 'anthropic/claude-sonnet-4-5',
+    contextWindow: 200_000,
+    pricePer1MIn: 3,
+    pricePer1MOut: 15,
+    capabilities: { tooluse: true },
+    intents: [
+      { intent: 'balanced-agent', rank: 2 },
+      { intent: 'multi-file', rank: 3 },
+    ],
+  },
+  {
+    provider: 'openrouter_agent',
+    model: 'anthropic/claude-opus-4-5',
+    contextWindow: 200_000,
+    pricePer1MIn: 15,
+    pricePer1MOut: 75,
+    capabilities: { tooluse: true },
+    intents: [
+      { intent: 'multi-file', rank: 2 },
+      { intent: 'deep-reasoning', rank: 3 },
+    ],
+  },
+  {
+    provider: 'openrouter_agent',
+    model: 'openai/gpt-5',
+    contextWindow: 400_000,
+    pricePer1MIn: 5,
+    pricePer1MOut: 15,
+    capabilities: { reasoning: true, tooluse: true },
+    intents: [
+      { intent: 'deep-reasoning', rank: 3 },
+      { intent: 'balanced-agent', rank: 3 },
+    ],
+  },
+  {
+    provider: 'openrouter_agent',
+    model: 'openai/gpt-4o',
+    contextWindow: 128_000,
+    pricePer1MIn: 2.5,
+    pricePer1MOut: 10,
+    capabilities: { tooluse: true },
+    intents: [
+      { intent: 'balanced-agent', rank: 4 },
+      { intent: 'fast-cheap', rank: 3 },
+    ],
   },
 ];

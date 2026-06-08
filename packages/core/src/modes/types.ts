@@ -1,4 +1,4 @@
-import type { ActivityEvent, Adapter } from '../adapters/types.js';
+import type { ActivityEvent, Adapter, AskUserQuestionPayload } from '../adapters/types.js';
 import type { Clarification } from '../clarify/types.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { RouterContext } from '../router/policy.js';
@@ -57,6 +57,12 @@ export type ModeInput = {
    */
   onActivity?: (event: ActivityEvent) => void;
   /**
+   * Optional running-usage sink. Forwarded straight to the adapter
+   * so the REPL can render a live token / cost counter as the
+   * model streams. See AdapterCallInput.onUsage for semantics.
+   */
+  onUsage?: (usage: { tokensIn: number; tokensOut: number; costUsd: number }) => void;
+  /**
    * What to do when prompt-injection scanning surfaces a `high`
    * severity finding:
    *   - `'warn'` (default): record findings on the output and run
@@ -69,6 +75,27 @@ export type ModeInput = {
    * of policy.
    */
   injectionPolicy?: 'warn' | 'block';
+  /**
+   * Per-provider session ids captured from earlier runs in this REPL
+   * session. Used to give the agent conversational memory across
+   * prompts: when the router picks a provider that has a stored
+   * session id here, the mode forwards it as
+   * `AdapterCallInput.resumeSessionId` so the adapter can rehydrate
+   * the prior turn (Claude Code: `--resume <id>`).
+   *
+   * Keyed by `ProviderId`. An entry that doesn't match the routed
+   * provider is just ignored - the mode silently starts a fresh
+   * conversation rather than failing.
+   */
+  resumeSessions?: Partial<Record<RouteRef['provider'], string>>;
+  /**
+   * Optional callback fired when the underlying adapter detects a
+   * Claude Code `AskUserQuestion` tool call. Forwarded straight to
+   * the adapter so the REPL can intercept, abort the run, and let
+   * the user answer interactively (with `resumeSessions` carrying
+   * the conversation forward).
+   */
+  onUserQuestion?: (payload: AskUserQuestionPayload) => void;
 };
 
 export type ModeOutput = {
@@ -114,6 +141,25 @@ export type ModeOutput = {
    * later inspection / manual `git apply`.
    */
   artifactDir?: string;
+  /**
+   * When validators didn't run, the structured reason (mirrors
+   * `Report.validatorsSkippedReason`).
+   */
+  validatorsSkippedReason?: string;
+  /**
+   * Adapter-reported session id for this run, if the underlying
+   * provider exposes one (Claude Code emits a `session_id` on its
+   * `system/init` event). The REPL stores this keyed by provider
+   * and replays it on the next turn via `ModeInput.resumeSessions`
+   * so the agent retains conversational memory.
+   */
+  sessionId?: string;
+  /**
+   * Provider that produced `sessionId`. Stored alongside the id so
+   * the REPL can route session resume to the correct adapter even
+   * when the router would otherwise pick a different one.
+   */
+  sessionProvider?: RouteRef['provider'];
 };
 
 export type ModeContext = {

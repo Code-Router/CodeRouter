@@ -82,6 +82,10 @@
     "./workflows": {
       "types": "./dist/workflows/index.d.ts",
       "import": "./dist/workflows/index.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "import": "./dist/agent/index.js"
     }
   },
   "scripts": {

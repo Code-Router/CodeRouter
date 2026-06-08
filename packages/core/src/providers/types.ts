@@ -20,6 +20,15 @@ export type ProviderConfig = {
   transformer?: string[];
   /** Per-model capability + price overrides. */
   models: Record<string, ProviderModelConfig>;
+  /**
+   * Optional dynamic-catalog source. When set, the registry will
+   * fall through to this catalog for any model id that's not in
+   * the static `models` map - synthesising a `ProviderModelConfig`
+   * from catalog metadata (context window, pricing, capabilities).
+   * The static map still wins, so curated models can override the
+   * catalog defaults for routing rankings or pinned pricing.
+   */
+  dynamicCatalog?: 'openrouter';
 };
 
 export type ProviderModelConfig = {

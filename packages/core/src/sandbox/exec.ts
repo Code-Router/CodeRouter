@@ -38,23 +38,60 @@ export async function exec(
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
     const start = performance.now();
+    // We don't pass `signal` straight to spawn() because Node's
+    // built-in handler sends SIGTERM and then gives up - if the
+    // child traps SIGTERM (the Claude Code / Codex CLIs do, to flush
+    // network state on shutdown) the parent hangs waiting on it,
+    // and the user's ESC keystroke produces no observable effect.
+    // Instead we manage the abort ourselves: SIGTERM first, then
+    // force SIGKILL after KILL_GRACE_MS so a stuck subprocess can't
+    // wedge the REPL forever.
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       env: { ...process.env, ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
-      signal: opts.signal,
     });
 
     let stdout = '';
     let stderr = '';
     let killed = false;
+    let aborted = false;
+    let killEscalation: NodeJS.Timeout | null = null;
+
+    const KILL_GRACE_MS = 2_000;
+    const escalateKill = (reason: 'abort' | 'timeout') => {
+      if (reason === 'abort') aborted = true;
+      else killed = true;
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // child already exited
+      }
+      // Some CLIs trap SIGTERM and try to flush state; if they
+      // don't exit fast enough we force-kill. The grace window is
+      // intentionally short - the REPL feels broken if ESC takes
+      // 10+ seconds to take effect.
+      killEscalation = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // ignore
+        }
+      }, KILL_GRACE_MS);
+    };
 
     const timeout = opts.timeoutMs
-      ? setTimeout(() => {
-          killed = true;
-          child.kill('SIGKILL');
-        }, opts.timeoutMs)
+      ? setTimeout(() => escalateKill('timeout'), opts.timeoutMs)
       : null;
+
+    const onAbort = () => escalateKill('abort');
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        onAbort();
+      } else {
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
 
     child.stdout.on('data', (chunk: Buffer) => {
       const s = chunk.toString('utf8');
@@ -67,14 +104,31 @@ export async function exec(
       opts.onStderr?.(s);
     });
 
-    child.on('error', (err: Error) => {
+    const cleanup = () => {
       if (timeout) clearTimeout(timeout);
+      if (killEscalation) clearTimeout(killEscalation);
+      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+    };
+
+    child.on('error', (err: Error) => {
+      cleanup();
       reject(err);
     });
 
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      if (timeout) clearTimeout(timeout);
+      cleanup();
       const exitCode = code ?? (signal ? 128 : -1);
+      // We surface aborts as a thrown AbortError so callers can
+      // unwind cleanly instead of getting a confusing exit-128 they
+      // have to interpret. Timeouts continue to come back as a
+      // resolved result (with the kill marker) because some callers
+      // explicitly tolerate a slow subprocess up to the timeout.
+      if (aborted) {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        reject(err);
+        return;
+      }
       resolve({
         stdout,
         stderr: killed ? `${stderr}\n[killed after ${opts.timeoutMs}ms]` : stderr,

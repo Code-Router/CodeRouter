@@ -110,4 +110,35 @@ describe('worktree', () => {
       /not a git working tree/,
     );
   });
+
+  it('mirrors host pending changes (tracked + untracked) into the worktree', async () => {
+    // Stage a tracked edit and create an untracked file in the host
+    // repo before forking - simulates the "agent applied a file but
+    // didn't commit" pattern that breaks multi-turn REPL sessions.
+    await writeFile(join(repoPath, 'src.ts'), "export const x = 99;\n");
+    await writeFile(join(repoPath, 'untracked.md'), '# untracked\n');
+
+    const wt = await createWorktree({ repoPath });
+
+    // Worktree should see BOTH the staged tracked edit and the
+    // untracked file, exactly as the user's working tree has them.
+    const tracked = await readFile(join(wt.path, 'src.ts'), 'utf8');
+    expect(tracked).toBe('export const x = 99;\n');
+    const untracked = await readFile(join(wt.path, 'untracked.md'), 'utf8');
+    expect(untracked).toBe('# untracked\n');
+
+    // baseSha should advance past HEAD - subsequent diffs are
+    // computed against the mirror commit, so they capture only the
+    // agent's net changes (not the host's pending state, which is
+    // already in the host repo).
+    const headRes = await gitOrThrow(['rev-parse', 'HEAD'], { cwd: repoPath });
+    const repoHead = headRes.stdout.trim();
+    expect(wt.baseSha).not.toBe(repoHead);
+
+    // No edits in the worktree after mirroring → empty diff.
+    const noopFiles = await changedFiles(wt);
+    expect(noopFiles).toEqual([]);
+
+    await destroyWorktree(wt);
+  });
 });

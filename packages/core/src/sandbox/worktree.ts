@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { CommandError, exec, git, gitOrThrow } from './exec.js';
 
 export type WorktreeOptions = {
@@ -61,7 +61,7 @@ export async function createWorktree(opts: WorktreeOptions): Promise<Worktree> {
 
   const baseRef = opts.baseRef ?? 'HEAD';
   const baseShaRes = await gitOrThrow(['rev-parse', baseRef], { cwd: repoPath });
-  const baseSha = baseShaRes.stdout.trim();
+  let baseSha = baseShaRes.stdout.trim();
 
   // Always place worktrees in a tmpdir under our prefix; this keeps them
   // outside the repo (avoiding stray nested .git folders) and easy to GC.
@@ -75,6 +75,32 @@ export async function createWorktree(opts: WorktreeOptions): Promise<Worktree> {
     cwd: repoPath,
   });
 
+  // Mirror the host repo's pending working-tree state into the
+  // worktree, so a multi-turn REPL session sees its own previous
+  // edits even when those edits were applied via `git apply --index`
+  // (staged but not committed). Without this, a follow-up prompt
+  // like "you run it" looks at a fresh HEAD checkout that doesn't
+  // have the file the previous turn just wrote.
+  //
+  // Implementation notes:
+  //   1. Apply the host's `git diff HEAD --binary` to the worktree.
+  //      `--binary` so binary files (images, sqlite dbs) ship.
+  //   2. Copy each gitignore-respecting untracked file directly.
+  //   3. Stage everything and commit to a sentinel ref so the
+  //      worktree's `baseSha` advances - subsequent `diffWorktree`
+  //      calls now produce ONLY the agent's net changes, never the
+  //      host pending changes (which would otherwise get re-applied
+  //      by `applyArtifact`, doubling them up in the host repo).
+  //
+  // The whole step is best-effort: any failure falls back to a
+  // pristine HEAD worktree rather than aborting the run.
+  try {
+    const mirrored = await mirrorHostState(repoPath, wtPath);
+    if (mirrored) baseSha = mirrored;
+  } catch {
+    // best-effort - keep the un-mirrored worktree
+  }
+
   return {
     runId,
     branch,
@@ -87,15 +113,151 @@ export async function createWorktree(opts: WorktreeOptions): Promise<Worktree> {
 }
 
 /**
+ * Replays the host repo's pending changes (tracked diffs + untracked
+ * files) into a freshly-created worktree, then commits them so the
+ * worktree's "starting state" matches the user's actual workspace.
+ *
+ * Returns the new sha to use as `baseSha` on the worktree, or null
+ * when the host has no pending changes (no work to do).
+ */
+async function mirrorHostState(
+  repoPath: string,
+  wtPath: string,
+): Promise<string | null> {
+  // 1. Tracked changes (working tree + index vs HEAD), as a binary
+  //    patch so non-text files come through with index info that
+  //    `git apply` understands.
+  const diff = await git(['diff', '--binary', 'HEAD'], { cwd: repoPath });
+  const trackedPatch = diff.exitCode === 0 ? diff.stdout : '';
+
+  // 2. Untracked files (respecting .gitignore so we don't drag
+  //    node_modules / build artifacts into the agent's workspace).
+  const untrackedRes = await git(
+    ['ls-files', '--others', '--exclude-standard'],
+    { cwd: repoPath },
+  );
+  const untracked = untrackedRes.exitCode === 0
+    ? untrackedRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+    : [];
+
+  if (!trackedPatch && untracked.length === 0) return null;
+
+  // Apply the tracked diff inside the worktree.
+  if (trackedPatch) {
+    const apply = await exec('git', ['apply', '--index', '-'], {
+      cwd: wtPath,
+      input: trackedPatch,
+    });
+    if (apply.exitCode !== 0) {
+      // 3-way fallback covers minor index drift between repo + worktree.
+      const apply3 = await exec('git', ['apply', '--3way', '--index', '-'], {
+        cwd: wtPath,
+        input: trackedPatch,
+      });
+      if (apply3.exitCode !== 0) {
+        throw new CommandError(
+          `mirrorHostState: failed to apply host diff: ${apply3.stderr.trim()}`,
+          apply3,
+          'git',
+          ['apply', '--3way', '--index'],
+        );
+      }
+    }
+  }
+
+  // Copy each untracked file from repo to worktree, preserving
+  // path layout. Cheaper than re-implementing rsync; respects
+  // .gitignore via the `ls-files --exclude-standard` we ran above.
+  for (const rel of untracked) {
+    const src = join(repoPath, rel);
+    const dst = join(wtPath, rel);
+    await mkdir(dirname(dst), { recursive: true });
+    try {
+      await copyFile(src, dst);
+    } catch {
+      // skip files that vanish between ls-files and copyFile
+      continue;
+    }
+  }
+
+  // Stage everything (including the just-copied untracked files) and
+  // commit to advance the worktree branch's HEAD. The new HEAD is
+  // what subsequent `diffWorktree` / `changedFiles` calls compare
+  // against - so the agent's diff captures only its own work, not
+  // the host's pre-existing pending state.
+  await gitOrThrow(['add', '-A'], { cwd: wtPath });
+  // `--allow-empty` covers the rare case where the diff was a noop
+  // (e.g. permission-only change that didn't survive apply).
+  await gitOrThrow(
+    [
+      '-c', 'user.email=coderouter@local',
+      '-c', 'user.name=CodeRouter',
+      'commit', '--allow-empty', '-m', 'coderouter: mirror host state',
+    ],
+    { cwd: wtPath },
+  );
+  const newHead = await gitOrThrow(['rev-parse', 'HEAD'], { cwd: wtPath });
+  return newHead.stdout.trim();
+}
+
+/**
+ * Pathspec exclusions appended to every worktree diff command.
+ *
+ * These are common build artifacts and machine-state files that an
+ * agent run can incidentally produce (the model executes
+ * `python3 script.py` for a smoke test, Python compiles the source
+ * to `__pycache__/script.cpython-312.pyc`, etc.) but that the user
+ * doesn't actually want in their patch:
+ *
+ *   1. The user's `.gitignore` may already exclude them - but a
+ *      worktree forked from a clean tree has no `.gitignore`-aware
+ *      diff context for paths that didn't exist before.
+ *   2. Binary patches for `.pyc`, `.so`, etc. need full index
+ *      lines to apply, which our cross-worktree apply pipeline
+ *      can't always produce; including them silently breaks accept.
+ *   3. Even when they apply, the user never asked the agent to
+ *      modify their cache directories - it's pure noise.
+ *
+ * Conservative on purpose: when in doubt the file ships. Adding a
+ * pattern here only filters paths that NO sane workflow tracks.
+ */
+const DIFF_EXCLUDES: readonly string[] = [
+  ':(exclude)__pycache__',
+  ':(exclude,glob)**/__pycache__/**',
+  ':(exclude,glob)**/*.pyc',
+  ':(exclude,glob)**/*.pyo',
+  ':(exclude,glob)**/*.pyd',
+  ':(exclude)node_modules',
+  ':(exclude,glob)**/node_modules/**',
+  ':(exclude)dist',
+  ':(exclude,glob)**/dist/**',
+  ':(exclude).next',
+  ':(exclude,glob)**/.next/**',
+  ':(exclude).turbo',
+  ':(exclude,glob)**/.turbo/**',
+  ':(exclude).cache',
+  ':(exclude,glob)**/.cache/**',
+  ':(exclude)target',
+  ':(exclude,glob)**/target/**',
+  ':(exclude,glob)**/.DS_Store',
+  ':(exclude,glob)**/Thumbs.db',
+];
+
+/**
  * Reads the worktree's current diff against its base sha. Includes
  * untracked files (which `git diff` omits by default) by staging them
- * with `git add -N` so they appear as adds.
+ * with `git add -N` so they appear as adds. Filters out common build
+ * artifacts via `DIFF_EXCLUDES` so a stray `__pycache__/*.pyc` from
+ * the model running a smoke test doesn't end up in the user's patch.
  */
 export async function diffWorktree(wt: Worktree): Promise<string> {
   // Force untracked files to appear in the diff.
   await git(['add', '-N', '.'], { cwd: wt.path });
 
-  const result = await git(['diff', '--patch', wt.baseSha], { cwd: wt.path });
+  const result = await git(
+    ['diff', '--patch', wt.baseSha, '--', '.', ...DIFF_EXCLUDES],
+    { cwd: wt.path },
+  );
   if (result.exitCode !== 0) {
     throw new CommandError(
       `git diff failed: ${result.stderr.trim()}`,
@@ -111,7 +273,7 @@ export async function diffWorktree(wt: Worktree): Promise<string> {
 export async function changedFiles(wt: Worktree): Promise<string[]> {
   await git(['add', '-N', '.'], { cwd: wt.path });
   const result = await gitOrThrow(
-    ['diff', '--name-only', wt.baseSha],
+    ['diff', '--name-only', wt.baseSha, '--', '.', ...DIFF_EXCLUDES],
     { cwd: wt.path },
   );
   return result.stdout
@@ -123,7 +285,10 @@ export async function changedFiles(wt: Worktree): Promise<string[]> {
 /** Returns short metrics for the worktree diff (used by report layer). */
 export async function diffStats(wt: Worktree): Promise<WorktreeMetrics> {
   await git(['add', '-N', '.'], { cwd: wt.path });
-  const result = await git(['diff', '--numstat', wt.baseSha], { cwd: wt.path });
+  const result = await git(
+    ['diff', '--numstat', wt.baseSha, '--', '.', ...DIFF_EXCLUDES],
+    { cwd: wt.path },
+  );
   if (result.exitCode !== 0) {
     return { filesChanged: 0, insertions: 0, deletions: 0 };
   }
