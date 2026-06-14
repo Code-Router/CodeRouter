@@ -10,7 +10,7 @@ import { ClaudeCodeAdapter } from '../adapters/claudeCode.js';
 import { CodeRouterAgentAdapter } from '../adapters/coderouterAgent.js';
 import { CodexAdapter } from '../adapters/codex.js';
 import { GoogleAdapter } from '../adapters/google.js';
-import { OllamaAdapter } from '../adapters/ollama.js';
+import { OllamaAdapter, isOllamaModelInstalled } from '../adapters/ollama.js';
 import { OpenAIAdapter } from '../adapters/openai.js';
 import { OpenAICompatAdapter } from '../adapters/openaiCompat.js';
 import type { Adapter } from '../adapters/types.js';
@@ -129,7 +129,10 @@ export class ProviderRegistry {
     }
     if (provider.adapter === 'ollama') {
       if (process.env.CODEROUTER_DISABLE_OLLAMA === '1') return false;
-      return whichSync('ollama') !== null;
+      if (whichSync('ollama') === null) return false;
+      // The binary being on PATH isn't enough - the configured model
+      // must actually be pulled, or the local server 404s mid-run.
+      return Object.keys(provider.models).some((m) => isOllamaModelInstalled(m));
     }
     // coderouter_agent providers piggy-back on the same API key as
     // their chat-only sibling - readiness is just "is the key set".

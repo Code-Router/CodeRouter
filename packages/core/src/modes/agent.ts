@@ -8,9 +8,11 @@ import { effortProfile } from '../router/effort.js';
 import { runHandoff } from '../handoff/workflow.js';
 import {
   changedFiles,
+  commitWorktreeState,
   createWorktree,
   destroyWorktree,
   diffWorktree,
+  ensureGitRepo,
   mergeWorktree,
   persistRunArtifact,
 } from '../sandbox/worktree.js';
@@ -112,8 +114,36 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   }
 
   progress({ phase: 'agent/worktree', stage: 'start' });
-  const wt = await createWorktree({ repoPath: input.cwd, runId, prefix: 'agent' });
-  progress({ phase: 'agent/worktree', stage: 'done' });
+  // Two paths depending on whether the REPL is keeping a session-
+  // wide worktree alive across turns:
+  //
+  //   1. `existingWorktree` set -> reuse it. The cwd/branch/baseSha
+  //      from the last turn carry over so the agent sees the files
+  //      it created earlier and "the directory above this one"
+  //      means the same thing every turn. We DON'T re-init or
+  //      mirror state here - that's a one-time cost paid on the
+  //      first turn.
+  //
+  //   2. Unset -> create fresh. Bootstrap a git repo if needed
+  //      (Claude Code-style "point me at any folder" UX), fork a
+  //      worktree off HEAD, mirror the user's pending state in.
+  const reusedWorktree = input.existingWorktree;
+  let wt: import('../sandbox/worktree.js').Worktree;
+  let repoInitCreated = false;
+  let createdThisTurn = false;
+  if (reusedWorktree) {
+    wt = { ...reusedWorktree };
+  } else {
+    const repoInit = await ensureGitRepo(input.cwd, { autoInit: true });
+    repoInitCreated = repoInit.created;
+    wt = await createWorktree({ repoPath: input.cwd, runId, prefix: 'agent' });
+    createdThisTurn = true;
+  }
+  progress({
+    phase: 'agent/worktree',
+    stage: 'done',
+    message: repoInitCreated ? 'initialized git repo' : undefined,
+  });
 
   let manifest = { entries: [], totalTokens: 0, budget: 0, truncated: false } as import('../types.js').ContextManifest;
   if (!input.fast) {
@@ -191,10 +221,25 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       },
     });
   } catch (err) {
-    await destroyWorktree(wt).catch(() => {});
+    // Only destroy the worktree on transient failures when we created
+    // it this turn AND the caller hasn't asked us to keep it (REPL
+    // passes `keepWorktree: true` to preserve cwd / accumulated
+    // edits across prompts).
+    if (createdThisTurn && !input.keepWorktree) {
+      await destroyWorktree(wt).catch(() => {});
+    }
     // Surface cancellation as a structured outcome instead of letting
     // the AbortError propagate as a generic failure.
     if (input.signal?.aborted) {
+      // Snapshot whatever partial state the model wrote before the
+      // abort hit, so the next turn diffs against "the world as it
+      // was when I aborted" rather than re-listing partial work
+      // that the user already declined to apply. The file content
+      // stays on disk (and visible to the agent on the next turn)
+      // either way - we're just advancing the diff baseline.
+      const newSha = input.keepWorktree
+        ? await commitWorktreeState(wt, 'coderouter: aborted turn').catch(() => null)
+        : null;
       return {
         mode: 'agent',
         status: 'aborted',
@@ -209,6 +254,20 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
         durationMs: performance.now() - start,
         rationale: `${route.rationale} (aborted)`,
         securityFindings,
+        // Hand the worktree back even on abort so the REPL can
+        // reuse it on the next prompt - the user often hits esc to
+        // course-correct mid-run, then types a refined prompt.
+        worktree: input.keepWorktree
+          ? {
+              runId: wt.runId,
+              branch: wt.branch,
+              path: wt.path,
+              baseRef: wt.baseRef,
+              baseSha: newSha ?? wt.baseSha,
+              repoPath: wt.repoPath,
+              createdAt: wt.createdAt,
+            }
+          : undefined,
       };
     }
     throw err;
@@ -304,20 +363,54 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
     if (artifact) artifactDir = artifact.dir;
   }
 
+  // Apply + lifecycle. Three flavors:
+  //
+  //   1. `keepWorktree=true`  (REPL session)    -> never destroy.
+  //      Optionally merge into host when `apply` is on, then snapshot
+  //      the worktree's state into a commit so `baseSha` advances
+  //      and the next turn's diff is net-new.
+  //   2. `keepWorktree=false`+`apply=true`      -> merge into host
+  //      and destroy.
+  //   3. `keepWorktree=false`+`apply=false`     -> destroy. The
+  //      REPL/CLI's artifact pipeline ships the diff to disk
+  //      separately above (`persistRunArtifact`) so the user can
+  //      `git apply` it manually later if they want.
   let applied = false;
-  if (input.apply) {
-    if (files.length > 0) {
-      try {
-        await mergeWorktree(wt);
-        applied = true;
-      } catch {
-        applied = false;
-      }
-    } else {
-      await destroyWorktree(wt).catch(() => {});
+  let applyError: string | undefined;
+  if (input.apply && files.length > 0) {
+    try {
+      await mergeWorktree(wt, { cleanup: false });
+      applied = true;
+    } catch (err) {
+      // Don't swallow this silently - the user passed --apply and
+      // deserves to know the merge back into their tree failed (the
+      // patch is still recoverable from artifactDir). This exact
+      // silence made the "apply=off?!" confusion possible.
+      applied = false;
+      applyError = err instanceof Error ? err.message : String(err);
     }
-  } else {
+  }
+  if (!input.keepWorktree) {
     await destroyWorktree(wt).catch(() => {});
+  }
+
+  // For session-wide worktrees, snapshot whatever state the agent
+  // left behind into a commit on the worktree branch so the next
+  // turn's `diffWorktree` produces only the *next* turn's net
+  // changes. Without this, every subsequent turn would re-list (and
+  // re-merge) the entire session's changes.
+  let outgoingWorktree: import('./types.js').WorktreeHandle | undefined;
+  if (input.keepWorktree) {
+    const newSha = await commitWorktreeState(wt).catch(() => null);
+    outgoingWorktree = {
+      runId: wt.runId,
+      branch: wt.branch,
+      path: wt.path,
+      baseRef: wt.baseRef,
+      baseSha: newSha ?? wt.baseSha,
+      repoPath: wt.repoPath,
+      createdAt: wt.createdAt,
+    };
   }
 
   const status = summarize(validators).status === 'fail' ? 'partial' : 'success';
@@ -345,10 +438,12 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
     rationale: `${route.rationale}${handoffPasses ? ` + ${handoffPasses} handoff pass(es)` : ''}`,
     securityFindings,
     applied,
+    applyError,
     artifactDir,
     validatorsSkippedReason: skipReason ?? undefined,
     sessionId: res.sessionId,
     sessionProvider: res.sessionId ? route.provider : undefined,
+    worktree: outgoingWorktree,
   };
 }
 

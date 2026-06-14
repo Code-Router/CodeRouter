@@ -12,6 +12,12 @@ export type DualPlanInput = {
   /** Whether to also include the raw plan text alongside the agreement summary. */
   includeRaw?: boolean;
   signal?: AbortSignal;
+  /**
+   * Working directory for local-CLI planners (Claude Code / Codex
+   * require one). Planning is always read-only - the adapters get
+   * `readOnly: true` so they can read the repo but never write it.
+   */
+  cwd?: string;
 };
 
 export type DualPlanResult = {
@@ -69,6 +75,8 @@ export async function runDualPlan(opts: DualPlanInput): Promise<DualPlanResult> 
       prompt: opts.task,
       systemPrompt: opts.systemPrompt,
       signal: opts.signal,
+      cwd: opts.cwd,
+      readOnly: true,
     });
 
   const [resA, resB] = await Promise.all([planFn(adapterA), planFn(adapterB)]);
@@ -90,6 +98,8 @@ export async function runDualPlan(opts: DualPlanInput): Promise<DualPlanResult> 
     systemPrompt: JUDGE_SYSTEM,
     maxTokens: 1_500,
     signal: opts.signal,
+    cwd: opts.cwd,
+    readOnly: true,
   });
 
   const parsed = extractJsonBlock<DualPlanDecision>(judgeRes.text);

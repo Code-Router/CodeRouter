@@ -29,9 +29,11 @@ export function buildReport(prompt: string, out: ModeOutput): Report {
     escalationHint: (out as { escalationHint?: string }).escalationHint,
     securityFindings: out.securityFindings,
     applied: out.applied,
+    applyError: out.applyError,
     artifactDir: out.artifactDir,
     validatorsSkippedReason: out.validatorsSkippedReason,
     sessionId: out.sessionId,
     sessionProvider: out.sessionProvider,
+    worktree: out.worktree,
   };
 }

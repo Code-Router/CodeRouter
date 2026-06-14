@@ -86,6 +86,11 @@ export async function runDebugMode(input: ModeInput, ctx: ModeContext): Promise<
       prompt: `${evidence}\n\nGenerate 3 ranked hypotheses for the root cause. For each include claim, supporting evidence, and recommended next probe.`,
       reasoningEffort: 'high',
       maxTokens: 3_000,
+      // Local-CLI adapters need a cwd; readOnly because debug mode
+      // investigates, it doesn't fix.
+      cwd: input.cwd,
+      readOnly: true,
+      signal: input.signal,
     });
     hypothesisText = res.text;
     routes = [route];

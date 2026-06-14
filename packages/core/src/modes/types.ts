@@ -96,6 +96,53 @@ export type ModeInput = {
    * the conversation forward).
    */
   onUserQuestion?: (payload: AskUserQuestionPayload) => void;
+  /**
+   * An existing worktree to reuse for this turn. When set, the mode
+   * skips `createWorktree`/`ensureGitRepo`/`mirrorHostState` and
+   * runs the agent directly inside this path. Critical for keeping
+   * the agent's *cwd stable across REPL turns* - without it every
+   * turn would spawn under a fresh `/tmp/coderouter-XXX/agent-YYY`
+   * and the model would keep losing its bearings ("the directory
+   * above this one" pointing somewhere different each time, files
+   * created last turn invisible this turn).
+   *
+   * The REPL owns the lifecycle: it creates the worktree on the
+   * first turn (via the mode's normal create path with this field
+   * unset and `keepWorktree` set), captures the resulting
+   * `ModeOutput.worktree`, and then passes the same handle on every
+   * subsequent turn.
+   */
+  existingWorktree?: WorktreeHandle;
+  /**
+   * When true, the mode keeps the worktree alive past the end of
+   * the run and returns its handle on `ModeOutput.worktree` so the
+   * caller can reuse it. Set by the REPL on every turn so the same
+   * worktree carries across the entire session; left false for
+   * one-shot CLI invocations (`coderouter run …`) where there's no
+   * follow-up turn to benefit from a preserved worktree.
+   *
+   * Independent of `apply`: with `keepWorktree=true && apply=true`
+   * the mode advances the worktree's baseSha post-merge so the
+   * next turn's diff is "net new" rather than a re-listing of every
+   * change ever made in the session.
+   */
+  keepWorktree?: boolean;
+};
+
+/**
+ * Lightweight worktree descriptor passed across turn boundaries.
+ * Mirrors the relevant subset of `Worktree` from the sandbox
+ * module - kept here as a plain shape so the modes layer doesn't
+ * have to import from sandbox just to type its own input.
+ */
+export type WorktreeHandle = {
+  runId: string;
+  branch: string;
+  path: string;
+  baseRef: string;
+  baseSha: string;
+  repoPath: string;
+  createdAt: number;
 };
 
 export type ModeOutput = {
@@ -135,6 +182,13 @@ export type ModeOutput = {
    */
   applied?: boolean;
   /**
+   * When `apply` was requested but the merge back into the host repo
+   * failed, the underlying git error. Lets the renderer distinguish
+   * "apply was off" from "apply was on and broke" - the patch is
+   * still recoverable from `artifactDir` either way.
+   */
+  applyError?: string;
+  /**
    * Filesystem path under `<repo>/.coderouter/runs/<runId>/` where
    * the diff + a small manifest were persisted before the worktree
    * was destroyed. Set when there were changes to keep around for
@@ -160,6 +214,22 @@ export type ModeOutput = {
    * when the router would otherwise pick a different one.
    */
   sessionProvider?: RouteRef['provider'];
+  /**
+   * The worktree the mode just ran in (whether it was created this
+   * turn or reused from `ModeInput.existingWorktree`). The REPL
+   * captures this and feeds it back as `existingWorktree` on the
+   * next turn so the agent's cwd stays stable across the whole
+   * session.
+   *
+   * `baseSha` here is the *post-turn* sha (i.e. after we snapshot
+   * the turn's edits as a commit on the worktree branch), so the
+   * next turn's `diffWorktree` produces only the next turn's net
+   * changes rather than re-listing everything the session has ever
+   * touched. `null` here means we couldn't safely advance the
+   * baseSha (commit failed, etc.) - callers can fall back to the
+   * input's baseSha.
+   */
+  worktree?: WorktreeHandle;
 };
 
 export type ModeContext = {

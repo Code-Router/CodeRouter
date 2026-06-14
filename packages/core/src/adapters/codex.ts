@@ -136,7 +136,9 @@ export class CodexAdapter extends BaseAdapter {
     // approval=never so codex can edit files inside our worktree
     // without stalling for an interactive prompt that --json can't
     // deliver. Both are overridable per-instance via opts.
-    const sandbox = this.opts.sandbox ?? 'workspace-write';
+    // `input.readOnly` (plan / review modes running in the user's
+    // real cwd) hard-overrides to read-only regardless of opts.
+    const sandbox = input.readOnly ? 'read-only' : (this.opts.sandbox ?? 'workspace-write');
     args.push('-s', sandbox);
     const approval = this.opts.approval ?? 'never';
     // Newer codex versions expose approval policy only through the

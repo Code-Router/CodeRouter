@@ -1,4 +1,5 @@
 import { detectCodexAuthMode } from '../adapters/codex.js';
+import { isOllamaModelInstalled } from '../adapters/ollama.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { RouteRef } from '../types.js';
 import { CATALOG } from './entries.js';
@@ -78,6 +79,10 @@ export function resolveIntent(
     if (forbidRoutes.has(`${entry.provider},${entry.model}`)) return [];
     if (!registry.has(entry.provider)) return [];
     if (!registry.isReady(entry.provider)) return [];
+    // Provider-level readiness isn't model-level readiness for
+    // ollama: the registry says "ready" when ANY configured model is
+    // pulled, but this specific catalog entry's model may not be.
+    if (entry.provider === 'ollama' && !isOllamaModelInstalled(entry.model)) return [];
     const binding = entry.intents.find((b) => b.intent === intent);
     if (!binding) return [];
     let rank = binding.rank;

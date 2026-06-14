@@ -61,6 +61,15 @@ export type AdapterCallInput = {
   prompt: string;
   systemPrompt?: string;
   cwd?: string;
+  /**
+   * Read-only invocation: the adapter must not let the model write
+   * files or run mutating commands. Local-CLI adapters map this to
+   * their native read-only modes (Claude Code: `--permission-mode
+   * plan`, Codex: `--sandbox read-only`). Used by plan / masterplan /
+   * debug / review, which run directly in the user's cwd (no
+   * sandboxing worktree) and therefore MUST NOT mutate anything.
+   */
+  readOnly?: boolean;
   maxTokens?: number;
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
   transformer?: string[];

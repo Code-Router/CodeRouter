@@ -5,9 +5,20 @@ import { runModeCommand } from './commands/mode.js';
 import { runMemoryCommand } from './commands/memory.js';
 import { runRouteCommand } from './commands/route.js';
 import { runInitCommand } from './commands/init.js';
+import { loadCredentialsIntoEnv } from './ui/setup.js';
 import { BRAND_NAME } from './branding/index.js';
 
 export async function runCli(argv: string[]): Promise<void> {
+  // Hydrate API keys saved via the REPL's /setup wizard
+  // (~/.coderouter/credentials.json) into the environment for EVERY
+  // subcommand, not just the REPL. Without this, `coderouter run`
+  // and the mode aliases only saw literal env vars - a user who
+  // configured OpenRouter through /setup would get "no provider
+  // ready" the moment they tried a non-interactive run. Real env
+  // vars still win: loadCredentialsIntoEnv never overwrites a var
+  // that's already set.
+  loadCredentialsIntoEnv();
+
   const program = new Command();
   program
     .name('coderouter')

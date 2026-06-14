@@ -190,6 +190,36 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     });
   }, [cwd]);
 
+  // Tear down the session-wide worktree when the REPL exits cleanly
+  // (e.g. user types `/exit` or hits ctrl+c). Without this the
+  // worktree leaks under /tmp/coderouter-*; the next launch's
+  // `pruneStaleWorktrees` sweep eventually catches it but there's
+  // no reason to wait. Wired through process-level signals because
+  // useApp's `exit()` runs synchronously and react cleanup phases
+  // can fire after the Ink renderer is torn down.
+  useEffect(() => {
+    const cleanup = (): void => {
+      const wt = currentWorktreeRef.current;
+      if (!wt) return;
+      // Use `git worktree remove --force` directly via the sandbox
+      // module - we can't await async work from a process-exit
+      // hook, so this is fire-and-forget. `pruneStaleWorktrees` on
+      // next launch is the safety net.
+      currentWorktreeRef.current = undefined;
+      void sandbox.destroyWorktree(wt).catch(() => {
+        // best-effort; pruneStaleWorktrees on next launch will mop up.
+      });
+    };
+    process.on('beforeExit', cleanup);
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    return () => {
+      process.off('beforeExit', cleanup);
+      process.off('SIGINT', cleanup);
+      process.off('SIGTERM', cleanup);
+    };
+  }, []);
+
   // The welcome item is seeded at id=-1 so it lives above everything
   // else: real history items use ids handed out by idRef (starting at
   // 0) and therefore sort and key cleanly below it. Once <Static>
@@ -340,6 +370,20 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     Partial<Record<ProviderId, string>>
   >({});
   const resumeSessionsRef = useRef<Partial<Record<ProviderId, string>>>({});
+  // Long-lived agent worktree, kept alive across REPL turns. Without
+  // this every prompt would spin up a fresh `/tmp/coderouter-XXX/`
+  // worktree, which means (a) the model's cwd is different every
+  // turn so "the directory above this one" stops meaning anything,
+  // and (b) files the agent created in turn N are invisible in
+  // turn N+1 because turn N's worktree has been destroyed. Stored
+  // in a ref so dispatch reads the latest value even when fired
+  // from a stale closure (queued prompts, abort handlers).
+  const [currentWorktree, setCurrentWorktree] = useState<
+    import('@coderouter/core').WorktreeHandle | undefined
+  >(undefined);
+  const currentWorktreeRef = useRef<
+    import('@coderouter/core').WorktreeHandle | undefined
+  >(undefined);
   // Pending interactive question from the model. When set, the
   // previous run was aborted because Claude invoked
   // `AskUserQuestion`; the REPL renders an answer panel and the
@@ -456,6 +500,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         { id: logIdRef.current++, kind: 'text', text: chunk, routeLabel },
       ];
     }
+    flushLiveOverflowToHistory();
     setLiveLog(liveLogRef.current);
   }
 
@@ -514,7 +559,57 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         { id: logIdRef.current++, kind: 'thinking', text: event.text },
       ];
     }
+    flushLiveOverflowToHistory();
     setLiveLog(liveLogRef.current);
+  }
+
+  /**
+   * Incrementally commit the OLDEST live entries to Static history
+   * whenever the live log is about to exceed the visible viewport.
+   *
+   * Why: Ink's `<Static>` is the only render path that's safe for
+   * scrollback. Anything in the dynamic area (everything below
+   * `<Static>`) is rendered using cursor manipulation. If that
+   * dynamic content grows tall enough to scroll past the viewport,
+   * the scrolled-out lines become permanent terminal scrollback -
+   * but they're NOT in Ink's Static, so when we later try to commit
+   * the same content via Static, the same lines get printed AGAIN
+   * (= the duplicate-paragraph bug).
+   *
+   * The cure: actively pop from the front of the live log into
+   * Static whenever total visible height threatens to exceed
+   * `rows - margin`. Keep at least the LAST entry in live so the
+   * appendLogText merge-into-last-text-entry path keeps working.
+   */
+  function flushLiveOverflowToHistory(): void {
+    const rows = process.stdout.rows ?? 40;
+    // Reserve room for: spinner row, esc-hint row, blank line,
+    // chatbox (3 lines), status row. Conservative on small
+    // terminals, generous on large ones.
+    const reserved = 8;
+    const maxLines = Math.max(8, rows - reserved);
+
+    // Cheap height estimate. Doesn't account for terminal width
+    // wrapping, but the conservative `reserved` budget absorbs that.
+    let total = 0;
+    for (const e of liveLogRef.current) {
+      total += estimateLogEntryLines(e);
+    }
+    if (total <= maxLines) return;
+
+    const popped: LogEntry[] = [];
+    let i = 0;
+    while (
+      total > maxLines &&
+      i < liveLogRef.current.length - 1 // always keep the last entry alive
+    ) {
+      popped.push(liveLogRef.current[i]!);
+      total -= estimateLogEntryLines(liveLogRef.current[i]!);
+      i++;
+    }
+    if (popped.length === 0) return;
+    liveLogRef.current = liveLogRef.current.slice(i);
+    pushLog(popped);
   }
 
   function appendHistory(item: HistoryItem): void {
@@ -654,6 +749,18 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         // prompt that fires after this turn's session id was
         // recorded still picks it up.
         resumeSessions: resumeSessionsRef.current,
+        // Hand the prior turn's worktree back so the agent runs in
+        // the *same* cwd it ran in last turn, with its earlier edits
+        // still visible. Critical for conversational coding: without
+        // it the agent's filesystem state resets between every
+        // prompt and follow-up questions like "do task 1" hit a
+        // pristine tmpdir that has no idea what task 1 is.
+        existingWorktree: currentWorktreeRef.current,
+        // Signal the mode that this is an interactive REPL session,
+        // so it preserves the worktree past the end of the run and
+        // hands the (post-snapshot) handle back via
+        // `Report.worktree` for the next turn to pick up.
+        keepWorktree: true,
         progress: { notifier, close: () => {} },
         signal: controller.signal,
         onChunk: (chunk) => {
@@ -695,6 +802,15 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         };
         resumeSessionsRef.current = next;
         setResumeSessions(next);
+      }
+
+      // Capture the post-turn worktree handle so the next prompt
+      // continues in the same cwd / branch. Always use the report's
+      // value when present (its baseSha has been advanced past the
+      // turn's edits, so the next diff doesn't re-list everything).
+      if (report.worktree) {
+        currentWorktreeRef.current = report.worktree;
+        setCurrentWorktree(report.worktree);
       }
 
       // Surface prompt-injection findings before rendering the answer
@@ -1820,6 +1936,24 @@ function LogStream({
  */
 const MAX_BODY_LINES = 12;
 
+/**
+ * Approximate line count for a single log entry. Used by
+ * `flushLiveOverflowToHistory` to decide when the dynamic area is
+ * about to overflow the viewport. Doesn't try to be exact - the
+ * caller leaves a generous margin to absorb wrapping.
+ */
+function estimateLogEntryLines(e: LogEntry): number {
+  if (e.kind === 'text') {
+    const lines = e.text.split('\n').length;
+    return lines + (e.routeLabel ? 1 : 0);
+  }
+  if (e.kind === 'tool') {
+    const bodyLines = e.body ? e.body.split('\n').length : 0;
+    return 2 + Math.min(bodyLines, MAX_BODY_LINES);
+  }
+  return 1;
+}
+
 function ToolBlock({
   entry,
   frozen,
@@ -2067,15 +2201,19 @@ function TrustPanel({
       <Text color="gray">
         {'   CodeRouter will read files here and (when you approve) run agents that edit them.'}
       </Text>
-      <Box marginTop={1}>
-        <Text>   </Text>
-        <ConfirmButton label="Yes, trust" selected={choice === 'yes'} />
-        <Text>   </Text>
-        <ConfirmButton label="No, quit" selected={choice === 'no'} />
+      <Box marginTop={1} flexDirection="column">
+        <Box>
+          <Text>   </Text>
+          <ConfirmButton label="Yes, trust" selected={choice === 'yes'} />
+        </Box>
+        <Box marginTop={1}>
+          <Text>   </Text>
+          <ConfirmButton label="No, quit " selected={choice === 'no'} />
+        </Box>
       </Box>
       <Box marginTop={1}>
         <Text color="gray">
-          ← → to choose · enter to confirm · y / n for shortcut · esc to quit
+          ↑ ↓ to choose · enter to confirm · y / n for shortcut · esc to quit
         </Text>
       </Box>
     </Box>

@@ -64,18 +64,82 @@ export class ClaudeCodeAdapter extends BaseAdapter {
   override async run(input: AdapterCallInput): Promise<AdapterCallResult> {
     if (!input.cwd) throw new Error('ClaudeCodeAdapter requires `cwd` (a worktree path)');
 
-    const args = ['-p', input.prompt, '--output-format', 'stream-json', '--verbose'];
-    if (this.opts.model) args.push('--model', this.opts.model);
-    args.push('--permission-mode', this.opts.permissionMode ?? 'bypassPermissions');
-    // Replay the prior conversation when the caller has a session id
-    // from an earlier run. `claude --resume <id>` rehydrates the
+    // First attempt - replay the prior conversation if the caller
+    // has a session id. `claude --resume <id>` rehydrates the
     // model's context window so follow-up prompts ("you run it",
     // "the game you just made") actually reach a model that
-    // remembers the original turn. We always pass the prompt via
-    // `-p` regardless of resume so we keep the headless / scripted
-    // behaviour of stream-json output rather than dropping into
-    // claude's interactive REPL.
-    if (input.resumeSessionId) args.push('--resume', input.resumeSessionId);
+    // remembers the original turn.
+    let result = await this.runOnce(input, input.resumeSessionId);
+
+    // Stale resume id: claude returns exit 1 with
+    // `No conversation found with session ID: …` whenever the
+    // session has expired or was created in a previous CLI install.
+    // Drop the resume id and retry once with a fresh conversation
+    // so the user isn't permanently blocked.
+    if (result.staleSession && input.resumeSessionId) {
+      result = await this.runOnce(input, undefined);
+    }
+
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `ClaudeCodeAdapter: claude exit ${result.exitCode}\nstdout: ${result.stdoutTail}\nstderr: ${result.stderrTail}`,
+      );
+    }
+
+    const finalText = result.finalText;
+    const tokensIn = result.tokensIn;
+    const tokensOut = result.tokensOut;
+    const costUsd = result.costUsd;
+
+    return {
+      text: finalText,
+      tokensIn,
+      tokensOut,
+      costUsd,
+      durationMs: result.durationMs,
+      sessionId: result.sessionId,
+      raw: result.raw,
+    };
+  }
+
+  /**
+   * One invocation of the `claude` CLI. Wrapped so the public `run`
+   * method can fall back from `--resume <stale-id>` to a fresh
+   * session without duplicating the parser/exec wiring.
+   *
+   * Returns a plain bag of fields rather than throwing on non-zero
+   * exit; the caller decides whether to retry or surface the error.
+   */
+  private async runOnce(
+    input: AdapterCallInput,
+    resumeSessionId: string | undefined,
+  ): Promise<{
+    exitCode: number;
+    stdoutTail: string;
+    stderrTail: string;
+    durationMs: number;
+    finalText: string;
+    tokensIn: number;
+    tokensOut: number;
+    costUsd: number;
+    sessionId: string | undefined;
+    staleSession: boolean;
+    raw: unknown;
+  }> {
+    const args = ['-p', input.prompt, '--output-format', 'stream-json', '--verbose'];
+    if (this.opts.model) args.push('--model', this.opts.model);
+    // Read-only callers (plan / debug / review modes running in the
+    // user's real cwd, not a sandbox worktree) keep bypassPermissions
+    // so read tools never stall on approval, but the mutating tools
+    // are denied outright. We deliberately do NOT use
+    // `--permission-mode plan` here: that flips Claude into its
+    // plan-file workflow and the answer comes back as "Plan ready
+    // for review at ~/.claude/plans/…" instead of inline text.
+    args.push('--permission-mode', this.opts.permissionMode ?? 'bypassPermissions');
+    if (input.readOnly) {
+      args.push('--disallowedTools', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Bash');
+    }
+    if (resumeSessionId) args.push('--resume', resumeSessionId);
     if (this.opts.extraArgs) args.push(...this.opts.extraArgs);
 
     const parser = new ClaudeJsonStream({
@@ -88,31 +152,41 @@ export class ClaudeCodeAdapter extends BaseAdapter {
     });
 
     const res = await exec(this.opts.bin ?? 'claude', args, {
-      cwd: input.cwd,
+      cwd: input.cwd!,
       timeoutMs: this.opts.timeoutMs ?? 600_000,
       signal: input.signal,
       onStdout: (chunk: string) => parser.push(chunk),
     });
     parser.flush();
 
-    if (res.exitCode !== 0) {
-      throw new Error(
-        `ClaudeCodeAdapter: claude exit ${res.exitCode}\nstdout: ${res.stdout.slice(-1000)}\nstderr: ${res.stderr.slice(-1000)}`,
-      );
-    }
-
     const finalText = parser.finalText() || res.stdout;
     const tokensIn = parser.usage.input_tokens ?? 0;
     const tokensOut = parser.usage.output_tokens ?? 0;
-    const costUsd = parser.totalCostUsd > 0 ? parser.totalCostUsd : this.estimateCost(tokensIn, tokensOut);
+    const costUsd =
+      parser.totalCostUsd > 0 ? parser.totalCostUsd : this.estimateCost(tokensIn, tokensOut);
+
+    // Detect the specific "stale resume id" failure mode so the
+    // caller can transparently retry without `--resume`. We match
+    // both the stderr (the error claude prints when the session
+    // store can't find the id) and the structured stdout payload
+    // (the `errors[]` array in claude's stream-json result).
+    const stderrLooksStale = /No conversation found with session ID:/i.test(res.stderr);
+    const stdoutLooksStale =
+      /"errors":\s*\[\s*"No conversation found with session ID:/i.test(res.stdout);
+    const staleSession =
+      res.exitCode !== 0 && resumeSessionId !== undefined && (stderrLooksStale || stdoutLooksStale);
 
     return {
-      text: finalText,
+      exitCode: res.exitCode,
+      stdoutTail: res.stdout.slice(-1000),
+      stderrTail: res.stderr.slice(-1000),
+      durationMs: res.durationMs,
+      finalText,
       tokensIn,
       tokensOut,
       costUsd,
-      durationMs: res.durationMs,
       sessionId: parser.sessionId ?? undefined,
+      staleSession,
       raw: { stdout: res.stdout, stderr: res.stderr, events: parser.eventCount },
     };
   }

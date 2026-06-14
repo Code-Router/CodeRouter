@@ -111,18 +111,20 @@ export async function runMasterplanMode(
         routes: [strong[0]!, strong[1]!],
         judgeRoute: strong[0]!,
         registry: ctx.registry,
+        cwd: input.cwd,
+        signal: input.signal,
       });
       planText = composeDualPlanText(dual);
       synthesisCost = dual.totalCostUsd;
       synthesisRoute = [strong[0]!, strong[1]!];
     } else {
-      const single = await singlePlan(synthesizePrompt, classification, ctx, effort);
+      const single = await singlePlan(synthesizePrompt, classification, ctx, effort, input.cwd);
       planText = single.text;
       synthesisCost = single.costUsd;
       synthesisRoute = [single.route];
     }
   } else {
-    const single = await singlePlan(synthesizePrompt, classification, ctx, effort);
+    const single = await singlePlan(synthesizePrompt, classification, ctx, effort, input.cwd);
     planText = single.text;
     synthesisCost = single.costUsd;
     synthesisRoute = [single.route];
@@ -230,6 +232,7 @@ async function singlePlan(
   classification: import('../types.js').Classification,
   ctx: ModeContext,
   effort: import('../types.js').Effort,
+  cwd?: string,
 ): Promise<{ text: string; costUsd: number; route: RouteRef }> {
   const route = pick(classification, ctx.router, { effort });
   const adapter: Adapter = ctx.resolveAdapter
@@ -239,6 +242,10 @@ async function singlePlan(
     prompt,
     maxTokens: 6_000,
     reasoningEffort: effortProfile(effort).reasoningEffort,
+    // Local-CLI adapters require a cwd; readOnly guards the user's
+    // real tree since masterplan synthesis must never write.
+    cwd,
+    readOnly: true,
   });
   return { text: res.text, costUsd: res.costUsd, route };
 }

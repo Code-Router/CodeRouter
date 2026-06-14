@@ -38,24 +38,28 @@ export function renderReportText(r: Report, opts?: { includeText?: boolean }): s
         lines.push(`     ... and ${v.failures.length - head.length} more`);
       }
     }
-  } else if (r.validatorsSkippedReason) {
-    // Surface the skip reason so the user understands why no
-    // lint / typecheck / test output appeared. The reason strings
-    // are short tags (no-file-changes, no-node-sources-changed,
-    // node-deps-not-installed-in-worktree, fast-mode) so we
-    // translate them inline to a friendlier sentence.
-    lines.push('');
-    lines.push(`validators: skipped (${describeSkip(r.validatorsSkippedReason)})`);
   }
+  // Intentionally swallow `validatorsSkippedReason` here. Surfacing
+  // it on every chat turn that didn't change a file produced a
+  // "validators: skipped (no files changed)" line after every
+  // informational answer, which was just noise the user asked us
+  // to remove. The reason is still available on the Report object
+  // for callers (eval harness, MCP) that want to inspect it.
 
   if (r.filesChanged?.length) {
     lines.push('');
     const heading = r.applied
       ? `files changed (${r.filesChanged.length}) - applied:`
-      : `files changed (${r.filesChanged.length}) - NOT applied (apply=off):`;
+      : r.applyError
+        ? `files changed (${r.filesChanged.length}) - APPLY FAILED:`
+        : `files changed (${r.filesChanged.length}) - NOT applied (apply=off):`;
     lines.push(heading);
     for (const f of r.filesChanged.slice(0, 30)) lines.push(`  - ${f}`);
     if (r.filesChanged.length > 30) lines.push(`  ... and ${r.filesChanged.length - 30} more`);
+    if (!r.applied && r.applyError) {
+      lines.push('');
+      lines.push(`  apply error: ${truncate(r.applyError, 200)}`);
+    }
     if (!r.applied && r.artifactDir) {
       lines.push('');
       lines.push(`  the worktree was discarded; the diff is preserved at:`);
@@ -108,25 +112,6 @@ export function renderReportText(r: Report, opts?: { includeText?: boolean }): s
  */
 export function renderReportFooterText(r: Report): string {
   return renderReportText(r, { includeText: false });
-}
-
-function describeSkip(reason: string): string {
-  switch (reason) {
-    case 'no-file-changes':
-      return 'no files changed';
-    case 'fast-mode':
-      return '--fast';
-    default:
-      if (reason.endsWith('-deps-not-installed-in-worktree')) {
-        const lang = reason.replace('-deps-not-installed-in-worktree', '');
-        return `${lang} deps not installed in worktree`;
-      }
-      if (reason.startsWith('no-') && reason.endsWith('-sources-changed')) {
-        const lang = reason.replace('no-', '').replace('-sources-changed', '');
-        return `no ${lang} sources changed`;
-      }
-      return reason;
-  }
 }
 
 function pad(s: string, n: number): string {

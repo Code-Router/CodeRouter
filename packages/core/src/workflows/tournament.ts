@@ -141,6 +141,10 @@ export async function runTournament(opts: TournamentInput): Promise<TournamentRe
     prompt: judgePrompt,
     systemPrompt: JUDGE_SYSTEM,
     maxTokens: 800,
+    // Local-CLI judges (Claude Code / Codex) require a cwd; readOnly
+    // because judging compares diffs, it must never edit anything.
+    cwd: opts.repoPath,
+    readOnly: true,
   });
 
   const parsed = extractJsonBlock<{ winnerIndex?: number; rationale?: string }>(judgeRes.text);

@@ -24,7 +24,7 @@ export * as agent from './agent/index.js';
 // Mirrors what the CLI, MCP server, and eval harness import.
 export * from './types.js';
 export type { ProviderConfig, ProviderModelConfig } from './providers/types.js';
-export type { ModeInput, ModeOutput, ModeContext } from './modes/types.js';
+export type { ModeInput, ModeOutput, ModeContext, WorktreeHandle } from './modes/types.js';
 export type { ProgressNotifier, ProgressUpdate } from './modes/progress.js';
 export type { Report } from './report/types.js';
 export type { Store } from './store/index.js';

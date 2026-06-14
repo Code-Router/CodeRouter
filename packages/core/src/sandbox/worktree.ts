@@ -36,6 +36,63 @@ export type WorktreeMetrics = {
 };
 
 /**
+ * Bootstrap a working git repo at `repoPath` if one isn't already
+ * present. CodeRouter's sandboxing depends on `git worktree`, which
+ * is only available inside a real repo - so first-time runs in
+ * brand-new project dirs (Claude Code-style "just point it at any
+ * folder") need a one-shot `git init` + empty initial commit so we
+ * have a HEAD to fork worktrees off.
+ *
+ * Auto-init is opt-in via the `autoInit` flag. The caller (REPL,
+ * CLI runtime) decides whether to flip it - typically true once
+ * the user has trusted the directory, false in unattended/CI runs
+ * where silently writing a `.git/` would be surprising.
+ *
+ * Existing files are NOT staged or committed - they remain
+ * untracked, exactly as they were. The empty initial commit just
+ * gives us a HEAD; CodeRouter's worktree-mirroring step
+ * (`mirrorHostState`) already handles untracked files for the
+ * agent's view of state.
+ *
+ * Returns `{ created }` so the caller can surface a one-time hint
+ * to the user ("CodeRouter initialized git for this directory").
+ * Throws if `autoInit` is false and the dir isn't a repo, with an
+ * actionable message.
+ */
+export async function ensureGitRepo(
+  repoPath: string,
+  opts: { autoInit?: boolean } = {},
+): Promise<{ created: boolean }> {
+  const inside = await git(['rev-parse', '--is-inside-work-tree'], { cwd: repoPath });
+  if (inside.exitCode === 0 && inside.stdout.trim() === 'true') {
+    return { created: false };
+  }
+  if (!opts.autoInit) {
+    throw new Error(
+      `${repoPath} is not a git repository. CodeRouter sandboxes agent runs in a git worktree, ` +
+        `so the target directory needs to be a git repo. Either run \`git init\` here yourself, ` +
+        `or re-run CodeRouter with auto-init enabled to do it for you.`,
+    );
+  }
+  // git init + an empty initial commit. Empty so we don't sweep all
+  // pre-existing files into "tracked" status without the user's
+  // consent - they stay untracked, exactly as before.
+  await gitOrThrow(['init', '-q', '--initial-branch=main'], { cwd: repoPath });
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'CodeRouter',
+    GIT_AUTHOR_EMAIL: 'noreply@coderouter.dev',
+    GIT_COMMITTER_NAME: 'CodeRouter',
+    GIT_COMMITTER_EMAIL: 'noreply@coderouter.dev',
+  };
+  await gitOrThrow(
+    ['commit', '-q', '--allow-empty', '-m', 'CodeRouter: bootstrap commit'],
+    { cwd: repoPath, env },
+  );
+  return { created: true };
+}
+
+/**
  * Creates a fresh git worktree forked from `baseRef` of `repoPath`. The
  * worktree lives in a tmpdir by default; the caller owns its lifecycle and
  * must call `destroyWorktree` (or `mergeWorktree`) when done.
@@ -326,7 +383,14 @@ export async function mergeWorktree(
 
   if (strategy === 'apply') {
     const patch = await diffWorktree(wt);
-    const apply = await exec('git', ['apply', '--index', '-'], {
+    // Plain working-tree apply - deliberately NOT `--index`. The host
+    // repo may have been auto-inited by CodeRouter, in which case
+    // every pre-existing file is untracked; `git apply --index`
+    // refuses to patch files that aren't in the index ("does not
+    // exist in index"), which silently broke `--apply` for the
+    // entire point-at-any-folder flow. Plain apply only needs the
+    // file on disk. Staging is the user's call anyway.
+    const apply = await exec('git', ['apply', '-'], {
       cwd: wt.repoPath,
       input: patch,
     });
@@ -334,7 +398,7 @@ export async function mergeWorktree(
       // Fall back to a 3-way apply for context drift.
       const apply3 = await exec(
         'git',
-        ['apply', '--3way', '--index', '-'],
+        ['apply', '--3way', '-'],
         { cwd: wt.repoPath, input: patch },
       );
       if (apply3.exitCode !== 0) {
@@ -354,6 +418,54 @@ export async function mergeWorktree(
 
   if (opts.cleanup !== false) await destroyWorktree(wt);
   return files;
+}
+
+/**
+ * Snapshots the worktree's current state into a new commit on its
+ * branch and returns the resulting sha. Used by long-lived REPL
+ * sessions to advance `baseSha` after each turn so that subsequent
+ * `diffWorktree` calls produce only the *next* turn's net changes
+ * rather than re-listing every file the agent ever touched.
+ *
+ * Returns `null` when there's nothing to snapshot (no diff vs the
+ * current baseSha) - callers can keep the existing baseSha in that
+ * case. Best-effort: on any git failure we return `null` so the
+ * caller can fall back to the original baseSha rather than crashing
+ * the run.
+ */
+export async function commitWorktreeState(
+  wt: Worktree,
+  message = 'coderouter: turn snapshot',
+): Promise<string | null> {
+  try {
+    // Make untracked files visible to the index so `git commit` picks
+    // them up. -N adds intent-to-add (no content yet); the subsequent
+    // `git add -A` does the real staging.
+    await git(['add', '-N', '.'], { cwd: wt.path });
+    const status = await git(['status', '--porcelain'], { cwd: wt.path });
+    if (status.exitCode !== 0 || !status.stdout.trim()) return null;
+
+    const add = await git(['add', '-A', '--', '.', ...DIFF_EXCLUDES], { cwd: wt.path });
+    if (add.exitCode !== 0) return null;
+
+    // `--allow-empty` is defensive: some pathspec exclusions can leave
+    // the index empty even when status was non-empty.
+    const commit = await git(
+      [
+        '-c', 'user.email=coderouter@local',
+        '-c', 'user.name=CodeRouter',
+        'commit', '--allow-empty', '-m', message,
+      ],
+      { cwd: wt.path },
+    );
+    if (commit.exitCode !== 0) return null;
+
+    const head = await git(['rev-parse', 'HEAD'], { cwd: wt.path });
+    if (head.exitCode !== 0) return null;
+    return head.stdout.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

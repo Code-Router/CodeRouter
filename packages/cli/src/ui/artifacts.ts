@@ -181,7 +181,11 @@ export function applyArtifact(
     return { ok: false, error: `patch missing: ${artifact.patchPath}` };
   }
   try {
-    execFileSync('git', ['apply', '--index', artifact.patchPath], {
+    // Plain working-tree apply - NOT `--index`. Auto-inited repos
+    // leave pre-existing files untracked, and `git apply --index`
+    // hard-fails on any patch touching an untracked file ("does not
+    // exist in index"). Plain apply just needs the file on disk.
+    execFileSync('git', ['apply', artifact.patchPath], {
       cwd: repo,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -190,7 +194,7 @@ export function applyArtifact(
     // first attempt failed — try a 3-way merge for context drift
   }
   try {
-    execFileSync('git', ['apply', '--3way', '--index', artifact.patchPath], {
+    execFileSync('git', ['apply', '--3way', artifact.patchPath], {
       cwd: repo,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

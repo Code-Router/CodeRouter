@@ -19,6 +19,7 @@ import type {
   ProviderId,
   RouteRef,
   Store,
+  WorktreeHandle,
 } from '@coderouter/core';
 import type { Report } from '@coderouter/core';
 import { spinnerProgress } from './ui/progress.js';
@@ -92,6 +93,22 @@ export type CliRunOpts = {
    * instead of letting the model fall back to a guess.
    */
   onUserQuestion?: (payload: AskUserQuestionPayload) => void;
+  /**
+   * Session-wide worktree to reuse for this turn. The REPL captures
+   * this off `Report.worktree` after the first turn and feeds it
+   * back here so the agent's cwd, branch, and accumulated edits all
+   * carry across prompts. Unset on the first turn (mode creates a
+   * fresh worktree) and on one-shot non-REPL invocations.
+   */
+  existingWorktree?: WorktreeHandle;
+  /**
+   * When true, the mode keeps the run's worktree alive past the end
+   * of the call and returns its handle on `Report.worktree`. The
+   * REPL sets this on every turn so the same worktree carries
+   * across the whole conversation. Left false for `coderouter run`
+   * one-shot invocations.
+   */
+  keepWorktree?: boolean;
 };
 
 /**
@@ -139,6 +156,8 @@ export async function executeRun(opts: CliRunOpts): Promise<{
         injectionPolicy: opts.injectionPolicy,
         resumeSessions: opts.resumeSessions,
         onUserQuestion: opts.onUserQuestion,
+        existingWorktree: opts.existingWorktree,
+        keepWorktree: opts.keepWorktree,
       },
       {
         registry,

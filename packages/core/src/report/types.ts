@@ -1,3 +1,4 @@
+import type { WorktreeHandle } from '../modes/types.js';
 import type { InjectionFinding } from '../security/injection.js';
 import type {
   Citation,
@@ -49,6 +50,12 @@ export type Report = {
    */
   applied?: boolean;
   /**
+   * Git error from a failed `--apply` merge, when apply was on but
+   * the patch couldn't land in the host tree. Unset when apply was
+   * off or succeeded.
+   */
+  applyError?: string;
+  /**
    * Persisted artifact directory (`<repo>/.coderouter/runs/<runId>/`).
    * Set when the run produced changes; the directory contains
    * `changes.patch` and a `manifest.json` listing the touched files.
@@ -77,4 +84,13 @@ export type Report = {
   sessionId?: string;
   /** Provider that produced `sessionId`. */
   sessionProvider?: RouteRef['provider'];
+  /**
+   * Session-wide worktree the agent ran in. The REPL captures this
+   * after the first turn and feeds it back as
+   * `ModeInput.existingWorktree` on subsequent turns so the agent's
+   * cwd stays stable across the entire conversation. Unset for
+   * one-shot CLI invocations and modes that don't use a worktree
+   * (plan / debug / review).
+   */
+  worktree?: WorktreeHandle;
 };

@@ -61,6 +61,16 @@ export async function runPlanMode(input: ModeInput, ctx: ModeContext): Promise<M
     prompt: planPrompt,
     maxTokens: 4_000,
     reasoningEffort: profile.reasoningEffort,
+    // Local-CLI adapters (Claude Code / Codex) need a cwd to run in,
+    // and giving them the actual repo lets the planner read real
+    // code instead of planning blind. readOnly keeps them from
+    // mutating anything - plan mode must never write.
+    cwd: input.cwd,
+    readOnly: true,
+    signal: input.signal,
+    onChunk: input.onChunk,
+    onActivity: input.onActivity,
+    onUsage: input.onUsage,
   });
   progress({ phase: 'plan/phase4', stage: 'done', index: 2, total: 3 });
 
