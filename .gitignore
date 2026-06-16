@@ -14,6 +14,10 @@ coverage/
 
 .coderouter/
 !.coderouter/.gitkeep
+.bench/
+
+# Internal dev tooling (eval harness, benchmarks) — not shipped to users
+eval/
 
 *.log
 npm-debug.log*
