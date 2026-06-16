@@ -72,7 +72,12 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
 
     usage.tokensIn += turn.tokensIn;
     usage.tokensOut += turn.tokensOut;
-    usage.costUsd += input.transport.estimateCost?.(turn.tokensIn, turn.tokensOut) ?? 0;
+    // Prefer the backend's real cost (e.g. OpenRouter's usage.cost) when
+    // it reports one; fall back to the transport's list-price estimate.
+    usage.costUsd +=
+      typeof turn.costUsd === 'number'
+        ? turn.costUsd
+        : (input.transport.estimateCost?.(turn.tokensIn, turn.tokensOut) ?? 0);
     input.onUsage?.({ ...usage });
 
     const content = typeof turn.message.content === 'string' ? turn.message.content : '';

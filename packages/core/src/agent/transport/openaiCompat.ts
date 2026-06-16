@@ -58,9 +58,20 @@ type RawCompletionResponse = {
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
+    /**
+     * OpenRouter-only: the actual USD cost of the generation (already
+     * net of caching discounts, BYOK, etc.). Present when the request
+     * body carries `usage: { include: true }`.
+     */
+    cost?: number;
   };
   model?: string;
 };
+
+/** Whether a base URL points at OpenRouter, which can return real cost. */
+function isOpenRouter(baseURL: string): boolean {
+  return /openrouter\.ai/i.test(baseURL);
+}
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -79,6 +90,10 @@ export class OpenAICompatTransport implements ChatTransport {
       messages: req.messages,
       tools: req.tools,
       tool_choice: 'auto',
+      // Ask OpenRouter to report the real charged cost in `usage.cost`.
+      // Gated to OpenRouter because a top-level `usage` field isn't part
+      // of the standard OpenAI body and some strict backends reject it.
+      ...(isOpenRouter(this.opts.baseURL) ? { usage: { include: true } } : {}),
       ...(this.opts.extraBody ?? {}),
     };
     if (req.reasoningEffort) {
@@ -113,6 +128,7 @@ export class OpenAICompatTransport implements ChatTransport {
     }
     const tokensIn = data.usage?.prompt_tokens ?? 0;
     const tokensOut = data.usage?.completion_tokens ?? 0;
+    const costUsd = typeof data.usage?.cost === 'number' ? data.usage.cost : undefined;
 
     return {
       message: {
@@ -122,6 +138,7 @@ export class OpenAICompatTransport implements ChatTransport {
       },
       tokensIn,
       tokensOut,
+      costUsd,
       finishReason: choice.finish_reason,
     };
   }

@@ -63,6 +63,13 @@ export type ChatTurnResponse = {
   /** Token counts for this turn (NOT cumulative; loop sums across turns). */
   tokensIn: number;
   tokensOut: number;
+  /**
+   * Actual USD cost for this turn as reported by the backend (e.g.
+   * OpenRouter's `usage.cost`). Undefined when the backend doesn't
+   * surface a real figure; the loop then falls back to
+   * `estimateCost()`. NOT cumulative.
+   */
+  costUsd?: number;
   /** Optional finish reason from the backend (`stop`, `tool_calls`, ...). */
   finishReason?: string;
 };
