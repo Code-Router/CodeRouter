@@ -1,6 +1,7 @@
 import { detectCodexAuthMode } from '../adapters/codex.js';
 import { isOllamaModelInstalled } from '../adapters/ollama.js';
 import type { ProviderRegistry } from '../providers/registry.js';
+import { selectSmartModel } from '../router/smart/index.js';
 import type { RouteRef } from '../types.js';
 import { CATALOG } from './entries.js';
 import type { CatalogEntry, Intent } from './types.js';
@@ -124,11 +125,33 @@ export function resolveIntent(
   // of the router emits via `preferProvider`.
   const cfg = registry.list().find((p) => p.name === top.entry.provider);
   if (!cfg) return null;
+
+  // Smart model selection: when the winning provider is backed by the
+  // OpenRouter dynamic catalog and that catalog is loaded, let the smart
+  // router pick the best *current* model for this intent instead of the
+  // curated `entry.model`. This keeps routing adaptive as OpenRouter's
+  // lineup changes. Falls back to the hardcoded model when the catalog
+  // is empty (offline / no key) or nothing clears the constraints.
+  let model = top.entry.model;
+  let rationale = `intent:${intent}@rank${top.rank}`;
+  if (cfg.dynamicCatalog === 'openrouter') {
+    const catalog = registry.listOpenRouterCatalogModels();
+    if (catalog.length > 0) {
+      const smart = selectSmartModel(catalog, intent, {
+        requireTools: cfg.adapter === 'coderouter_agent',
+      });
+      if (smart) {
+        model = smart.id;
+        rationale = smart.rationale;
+      }
+    }
+  }
+
   return {
     provider: cfg.adapter,
-    model: top.entry.model,
+    model,
     via: top.entry.provider,
-    rationale: `intent:${intent}@rank${top.rank}`,
+    rationale,
   };
 }
 
