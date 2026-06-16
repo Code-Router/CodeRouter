@@ -143,6 +143,77 @@ describe('pick()', () => {
     expect(r.model).toBe('gpt-5');
   });
 
+  it('honors a preferred strong model for complex shapes', () => {
+    envSetup();
+    const ctx = {
+      registry: new ProviderRegistry(defaultProviders()),
+      preferredModels: {
+        strong: {
+          provider: 'anthropic' as const,
+          model: 'claude-sonnet-4-5',
+          via: 'anthropic',
+          rationale: '',
+        },
+      },
+    };
+    const r = pick(
+      classification({
+        taskType: 'refactor',
+        shape: {
+          deepReasoning: 0.4,
+          multiFileTaste: 0.9,
+          hugeContext: 0.3,
+          adversarial: 0.2,
+          algorithmic: 0.1,
+          exploratory: 0.3,
+        },
+      }),
+      ctx,
+    );
+    // Without the preference this multi-file shape resolves to Opus;
+    // the user's strong pick wins instead.
+    expect(r.model).toBe('claude-sonnet-4-5');
+    expect(r.rationale).toBe('preferred-strong');
+  });
+
+  it('honors a preferred cheap model for trivial tasks', () => {
+    envSetup();
+    const ctx = {
+      registry: new ProviderRegistry(defaultProviders()),
+      preferredModels: {
+        cheap: {
+          provider: 'deepseek' as const,
+          model: 'deepseek-chat',
+          via: 'deepseek',
+          rationale: '',
+        },
+      },
+    };
+    const r = pick(classification({ taskType: 'trivial' }), ctx);
+    expect(r.model).toBe('deepseek-chat');
+    expect(r.rationale).toBe('preferred-cheap:trivial');
+  });
+
+  it('ignores a preferred model whose provider is not configured', () => {
+    envSetup();
+    delete process.env.GROQ_API_KEY;
+    const ctx = {
+      registry: new ProviderRegistry(defaultProviders()),
+      preferredModels: {
+        cheap: {
+          provider: 'openai_compat' as const,
+          model: 'llama-3.3-70b-versatile',
+          via: 'groq',
+          rationale: '',
+        },
+      },
+    };
+    const r = pick(classification({ taskType: 'trivial' }), ctx);
+    // Groq isn't configured, so the stale preference is skipped and we
+    // fall back to a normally-routed cheap model.
+    expect(r.model).not.toBe('llama-3.3-70b-versatile');
+  });
+
   it('honors memoryBias forbidden routes', () => {
     envSetup();
     const ctx = {

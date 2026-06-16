@@ -20,12 +20,12 @@ export type SetupProvider = {
 };
 
 export const SETUP_PROVIDERS: readonly SetupProvider[] = [
-  { name: 'anthropic',  envVar: 'ANTHROPIC_API_KEY',  label: 'Anthropic (Claude)',          example: 'sk-ant-...' },
-  { name: 'openai',     envVar: 'OPENAI_API_KEY',     label: 'OpenAI (GPT, o-series)',      example: 'sk-...' },
-  { name: 'google',     envVar: 'GOOGLE_API_KEY',     label: 'Google (Gemini)',             example: 'AIza...' },
-  { name: 'openrouter', envVar: 'OPENROUTER_API_KEY', label: 'OpenRouter (all-in-one)',     example: 'sk-or-...' },
-  { name: 'deepseek',   envVar: 'DEEPSEEK_API_KEY',   label: 'DeepSeek',                    example: 'sk-...' },
-  { name: 'groq',       envVar: 'GROQ_API_KEY',       label: 'Groq',                        example: 'gsk_...' },
+  { name: 'anthropic',  envVar: 'ANTHROPIC_API_KEY',  label: 'Anthropic',          example: 'sk-ant-...' },
+  { name: 'openai',     envVar: 'OPENAI_API_KEY',     label: 'OpenAI',             example: 'sk-...' },
+  { name: 'google',     envVar: 'GOOGLE_API_KEY',     label: 'Google (Gemini)',    example: 'AIza...' },
+  { name: 'openrouter', envVar: 'OPENROUTER_API_KEY', label: 'OpenRouter',         example: 'sk-or-...' },
+  { name: 'deepseek',   envVar: 'DEEPSEEK_API_KEY',   label: 'DeepSeek',           example: 'sk-...' },
+  { name: 'groq',       envVar: 'GROQ_API_KEY',       label: 'Groq',               example: 'gsk_...' },
 ];
 
 export const CREDENTIALS_PATH = join(homedir(), '.coderouter', 'credentials.json');
@@ -38,7 +38,27 @@ type CredentialsFile = {
    * the user having to opt in.
    */
   hosts?: Partial<Record<HostProvider, { enabled?: boolean }>>;
+  /**
+   * Optional spending guardrails. `monthlyUsd` caps spend per calendar
+   * month; the dashboard surfaces progress against it. Stored globally
+   * (not per-project) since API keys + billing are account-wide.
+   */
+  limits?: { monthlyUsd?: number };
+  /**
+   * User's preferred models per tier. When set, routing leans on these
+   * instead of the catalog default: `strong` is used for high-effort
+   * intents (deep reasoning, multi-file, huge context), `cheap` for
+   * trivial / cost-sensitive ones. Each is a (provider, model) pair the
+   * router resolves against the registry; an unconfigured pick is
+   * silently ignored so a stale preference never blocks a run.
+   */
+  preferredModels?: {
+    strong?: PreferredModel;
+    cheap?: PreferredModel;
+  };
 };
+
+export type PreferredModel = { provider: string; model: string };
 
 /**
  * Hydrate process.env from the persisted credentials file. Safe to call
@@ -178,6 +198,97 @@ export function setHostEnabled(provider: HostProvider, enabled: boolean): void {
   const envName = HOST_DISABLE_ENV[provider];
   if (enabled) delete process.env[envName];
   else process.env[envName] = '1';
+}
+
+/**
+ * Read the persisted monthly spending limit (USD). Returns `null` when
+ * unset or invalid, meaning "no cap".
+ */
+export function getSpendingLimit(): { monthlyUsd: number | null } {
+  try {
+    const file = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+    const v = file.limits?.monthlyUsd;
+    return { monthlyUsd: typeof v === 'number' && v > 0 ? v : null };
+  } catch {
+    return { monthlyUsd: null };
+  }
+}
+
+/**
+ * Persist (or clear) the monthly spending limit. Passing `null` or a
+ * non-positive number removes the cap.
+ */
+export function setSpendingLimit(monthlyUsd: number | null): void {
+  let existing: CredentialsFile = {};
+  try {
+    existing = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+  } catch {
+    // file doesn't exist or is malformed - rewrite from scratch
+  }
+  existing.limits ??= {};
+  if (typeof monthlyUsd === 'number' && monthlyUsd > 0) {
+    existing.limits.monthlyUsd = monthlyUsd;
+  } else {
+    delete existing.limits.monthlyUsd;
+  }
+
+  mkdirSync(dirname(CREDENTIALS_PATH), { recursive: true });
+  writeFileSync(CREDENTIALS_PATH, `${JSON.stringify(existing, null, 2)}\n`, { encoding: 'utf8' });
+  try {
+    chmodSync(CREDENTIALS_PATH, 0o600);
+  } catch {
+    // permissions are best-effort (e.g. on Windows)
+  }
+}
+
+/**
+ * Read the user's preferred models per tier. Missing tiers come back
+ * as `null` ("let the router decide").
+ */
+export function getPreferredModels(): {
+  strong: PreferredModel | null;
+  cheap: PreferredModel | null;
+} {
+  try {
+    const file = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+    const norm = (m: PreferredModel | undefined): PreferredModel | null =>
+      m && typeof m.provider === 'string' && typeof m.model === 'string'
+        ? { provider: m.provider, model: m.model }
+        : null;
+    return {
+      strong: norm(file.preferredModels?.strong),
+      cheap: norm(file.preferredModels?.cheap),
+    };
+  } catch {
+    return { strong: null, cheap: null };
+  }
+}
+
+/**
+ * Persist (or clear) the preferred model for a tier. Passing `null`
+ * removes the preference for that tier.
+ */
+export function setPreferredModel(tier: 'strong' | 'cheap', value: PreferredModel | null): void {
+  let existing: CredentialsFile = {};
+  try {
+    existing = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+  } catch {
+    // file doesn't exist or is malformed - rewrite from scratch
+  }
+  existing.preferredModels ??= {};
+  if (value && value.provider && value.model) {
+    existing.preferredModels[tier] = { provider: value.provider, model: value.model };
+  } else {
+    delete existing.preferredModels[tier];
+  }
+
+  mkdirSync(dirname(CREDENTIALS_PATH), { recursive: true });
+  writeFileSync(CREDENTIALS_PATH, `${JSON.stringify(existing, null, 2)}\n`, { encoding: 'utf8' });
+  try {
+    chmodSync(CREDENTIALS_PATH, 0o600);
+  } catch {
+    // permissions are best-effort (e.g. on Windows)
+  }
 }
 
 /**

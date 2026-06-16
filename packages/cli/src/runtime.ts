@@ -23,6 +23,7 @@ import type {
 } from '@coderouter/core';
 import type { Report } from '@coderouter/core';
 import { spinnerProgress } from './ui/progress.js';
+import { getPreferredModels } from './ui/setup.js';
 
 export type ProgressAdapter = {
   notifier: ProgressNotifier;
@@ -161,7 +162,7 @@ export async function executeRun(opts: CliRunOpts): Promise<{
       },
       {
         registry,
-        router: { registry, memoryBias: bias },
+        router: { registry, memoryBias: bias, preferredModels: resolvePreferredModels(registry) },
         store,
       },
     );
@@ -171,6 +172,30 @@ export async function executeRun(opts: CliRunOpts): Promise<{
   } finally {
     close();
   }
+}
+
+/**
+ * Resolve the user's saved (provider, model) preferences into routable
+ * `RouteRef`s using the registry (so we know each provider's adapter).
+ * A preference whose provider isn't in the registry is dropped; the
+ * router separately re-checks readiness at pick time.
+ */
+function resolvePreferredModels(
+  registry: ProviderRegistry,
+): { strong?: RouteRef; cheap?: RouteRef } {
+  const saved = getPreferredModels();
+  const toRef = (p: { provider: string; model: string } | null): RouteRef | undefined => {
+    if (!p) return undefined;
+    const cfg = registry.list().find((c) => c.name === p.provider);
+    if (!cfg) return undefined;
+    return {
+      provider: cfg.adapter as RouteRef['provider'],
+      via: cfg.name,
+      model: p.model,
+      rationale: '',
+    };
+  };
+  return { strong: toRef(saved.strong), cheap: toRef(saved.cheap) };
 }
 
 function mergeProviders(extra: ProviderConfig[] | undefined): ProviderConfig[] {

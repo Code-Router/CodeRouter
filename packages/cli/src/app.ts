@@ -5,6 +5,7 @@ import { runModeCommand } from './commands/mode.js';
 import { runMemoryCommand } from './commands/memory.js';
 import { runRouteCommand } from './commands/route.js';
 import { runInitCommand } from './commands/init.js';
+import { runDashboardCommand } from './commands/dashboard.js';
 import { loadCredentialsIntoEnv } from './ui/setup.js';
 import { BRAND_NAME } from './branding/index.js';
 
@@ -80,6 +81,20 @@ export async function runCli(argv: string[]): Promise<void> {
     .option('-c, --cwd <path>', 'working directory', process.cwd())
     .action(async (action: string, key: string | undefined, opts: { cwd?: string }) => {
       await runMemoryCommand({ action, key, cwd: opts.cwd ?? process.cwd() });
+    });
+
+  program
+    .command('dashboard')
+    .description('open the local usage + settings dashboard in your browser')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .option('-p, --port <port>', 'preferred port', (v) => Number.parseInt(v, 10))
+    .option('--no-open', "don't open the browser automatically")
+    .action(async (opts: { cwd?: string; port?: number; open?: boolean }) => {
+      await runDashboardCommand({
+        cwd: opts.cwd ?? process.cwd(),
+        port: opts.port,
+        open: opts.open !== false,
+      });
     });
 
   program

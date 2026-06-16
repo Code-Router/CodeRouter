@@ -26,6 +26,15 @@ export type RouterContext = {
   memoryBias?: MemoryBias;
   /** Hard route override from config; if matched, returned verbatim. */
   routeOverrides?: { taskType?: Classification['taskType']; routeRef: RouteRef }[];
+  /**
+   * User-selected preferred models per tier (set via the dashboard's
+   * Models tab). When present and the underlying provider is ready,
+   * routing leans on these instead of the catalog default: `strong`
+   * for high-effort intents, `cheap` for trivial / cost-sensitive ones.
+   * A pick whose provider isn't ready is ignored so the router falls
+   * back to its normal selection.
+   */
+  preferredModels?: { strong?: RouteRef; cheap?: RouteRef };
 };
 
 /** Read-only handle into the persistent memory shape the router actually uses. */
@@ -87,6 +96,8 @@ export function pick(
 
   // 4) Force-cheap (handoff-fix); pick the cheapest capable route.
   if (opts.forceCheap) {
+    const pref = usablePreferred(ctx, 'cheap');
+    if (pref) return { ...pref, rationale: 'preferred-cheap: handoff fix' };
     const cheap = pickByHint('cheap', ctx);
     if (cheap) return { ...cheap, rationale: 'force-cheap: handoff fix' };
   }
@@ -94,6 +105,8 @@ export function pick(
   // 5) Cognitive-shape driven selection.
   const { shape, taskType } = classification;
   if (taskType === 'trivial' || taskType === 'docs') {
+    const pref = usablePreferred(ctx, 'cheap');
+    if (pref) return { ...pref, rationale: `preferred-cheap:${taskType}` };
     const cheap = pickByHint('cheap', ctx);
     if (cheap) return { ...cheap, rationale: `cheap-task:${taskType}` };
   }
@@ -108,6 +121,17 @@ export function pick(
     const ref = resolveIntent(intent, ctx.registry, { forbidRoutes });
     return ref ? { ...ref, rationale } : null;
   };
+
+  // When the shape calls for a strong model and the user pinned a
+  // preferred strong model, honor it before consulting the catalog.
+  const needsStrong =
+    shape.hugeContext > 0.7 ||
+    shape.multiFileTaste > 0.75 ||
+    (SHAPES_NEED_REASONING.some((k) => shape[k] >= 0.7) && profile.reasoningEffort !== 'minimal');
+  if (needsStrong) {
+    const pref = usablePreferred(ctx, 'strong');
+    if (pref) return { ...pref, rationale: 'preferred-strong' };
+  }
 
   if (shape.hugeContext > 0.7) {
     const r = tryIntent('huge-context', `shape:hugeContext=${shape.hugeContext.toFixed(2)}`);
@@ -237,6 +261,21 @@ function parseRouteRef(route: string): RouteRef | null {
   const [provider, ...rest] = route.split(',');
   if (!provider || rest.length === 0) return null;
   return { provider: provider as RouteRef['provider'], model: rest.join(','), rationale: '', via: provider };
+}
+
+/**
+ * Resolve a tier's preferred model into a routable ref, or null when
+ * unset / its provider isn't ready / it's been forbidden by memory. The
+ * `via` (provider name) drives the readiness check; an unconfigured
+ * preference is silently skipped so routing falls back to the catalog.
+ */
+function usablePreferred(ctx: RouterContext, tier: 'strong' | 'cheap'): RouteRef | null {
+  const ref = ctx.preferredModels?.[tier];
+  if (!ref) return null;
+  const providerName = ref.via ?? ref.provider;
+  if (!ctx.registry.has(providerName) || !ctx.registry.isReady(providerName)) return null;
+  if (isForbidden(ref, ctx)) return null;
+  return ref;
 }
 
 function isForbidden(ref: RouteRef, ctx: RouterContext): boolean {
