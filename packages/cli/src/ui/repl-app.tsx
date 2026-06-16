@@ -27,6 +27,7 @@ import {
   type RecordedRun,
 } from './artifacts.js';
 import { isDirectoryTrusted, trustDirectory } from './trust.js';
+import { activeMention, listWorkspaceFiles, rankFiles } from './fileIndex.js';
 import { executeRun } from '../runtime.js';
 import {
   BRAND_GLYPH,
@@ -281,6 +282,11 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   const queuedRef = useRef<string | null>(null);
   const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
   const [suggIdx, setSuggIdx] = useState(0);
+  // Workspace file list backing the `@`-mention picker. Loaded once on
+  // mount and refreshed whenever a run finishes (so files the agent
+  // just created show up). `git ls-files` is cheap; the manual-walk
+  // fallback is bounded.
+  const [fileIndex, setFileIndex] = useState<string[]>([]);
   // Pending review (approve/discard/trust) artifact shown
   // automatically after a run that produced changes when apply=off
   // and the user hasn't already trusted edits for this session.
@@ -443,9 +449,47 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     [filter, showSuggestions],
   );
 
+  // `@`-mention file picker: active when the cursor sits inside an
+  // `@token` (Claude-style). Mutually exclusive with the slash palette
+  // since one needs a leading `/` and the other an `@`.
+  const mention = useMemo(
+    () => (wizardStep === 'idle' && !input.startsWith('/') ? activeMention(input, cursor) : null),
+    [input, cursor, wizardStep],
+  );
+  const mentionSuggestions = useMemo(
+    () => (mention ? rankFiles(fileIndex, mention.query) : []),
+    [mention, fileIndex],
+  );
+  const showMentions = !busy && wizardStep === 'idle' && mention !== null && mentionSuggestions.length > 0;
+
+  // Clamp the shared selection index to whichever palette is active.
+  const activeSuggestCount = showMentions ? mentionSuggestions.length : suggestions.length;
   useEffect(() => {
-    if (suggIdx >= suggestions.length) setSuggIdx(0);
-  }, [suggestions.length, suggIdx]);
+    if (suggIdx >= activeSuggestCount) setSuggIdx(0);
+  }, [activeSuggestCount, suggIdx]);
+
+  // Load the workspace file list on mount and refresh it whenever a run
+  // finishes (busy -> idle), so newly-created files appear in the picker.
+  useEffect(() => {
+    if (!busy) setFileIndex(listWorkspaceFiles(cwd));
+  }, [busy, cwd]);
+
+  /**
+   * Complete the active `@`-mention with the highlighted file: splice
+   * the relative path in place of the typed query and drop a trailing
+   * space (which also closes the picker).
+   */
+  function completeMention(): void {
+    if (!mention) return;
+    const sel = mentionSuggestions[suggIdx] ?? mentionSuggestions[0];
+    if (!sel) return;
+    const before = input.slice(0, mention.start);
+    const after = input.slice(cursor);
+    const insert = `@${sel} `;
+    setInput(before + insert + after);
+    setCursor((before + insert).length);
+    setSuggIdx(0);
+  }
 
   /**
    * Short, terminal-friendly label for a route. Combines the
@@ -919,10 +963,20 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
               `  applied ${postRunArtifact.fileStats.length} file(s)${note}`,
               'success',
             );
-            try {
-              discardArtifact(postRunArtifact);
-            } catch {
-              // best-effort
+            const overwrote = result.overwrote ?? [];
+            if (overwrote.length > 0) {
+              pushSystem(
+                `  overwrote ${overwrote.length} pre-existing file(s): ${overwrote.join(', ')}\n  originals backed up at ${postRunArtifact.dir}/overwritten`,
+                'warn',
+              );
+            } else {
+              // Keep the artifact (with its backups) when we had to
+              // overwrite existing files, so the user can recover them.
+              try {
+                discardArtifact(postRunArtifact);
+              } catch {
+                // best-effort
+              }
             }
           } else {
             // Apply failed (context drift, conflict, etc.) - keep the
@@ -1054,6 +1108,13 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       if (result.ok) {
         const note = result.strategy === '3way' ? ' (with 3-way merge)' : '';
         pushSystem(`  applied ${run.files.length} file(s)${note}`, 'success');
+        const overwrote = result.overwrote ?? [];
+        if (overwrote.length > 0) {
+          pushSystem(
+            `  overwrote ${overwrote.length} pre-existing file(s): ${overwrote.join(', ')}\n  originals backed up at ${run.dir}/overwritten`,
+            'warn',
+          );
+        }
         try {
           discardArtifact(run);
         } catch {
@@ -1602,6 +1663,13 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     // chatbox - the previous "queued: ..." system message kept
     // getting pushed out of view during long runs and made it feel
     // like the keystroke vanished.
+    // When the `@`-mention picker is open, Enter inserts the selected
+    // file (like Claude) instead of submitting the prompt.
+    if (key.return && showMentions) {
+      completeMention();
+      return;
+    }
+
     if (key.return) {
       const line = input.trim();
       if (!line) return;
@@ -1616,6 +1684,13 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       return;
     }
 
+    if (!busy && showMentions && (key.upArrow || key.downArrow)) {
+      const max = mentionSuggestions.length;
+      if (max === 0) return;
+      setSuggIdx((i) => (key.upArrow ? (i - 1 + max) % max : (i + 1) % max));
+      return;
+    }
+
     if (!busy && showSuggestions && (key.upArrow || key.downArrow)) {
       const max = suggestions.length;
       if (max === 0) return;
@@ -1624,6 +1699,10 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     }
 
     if (!busy && key.tab) {
+      if (showMentions && mentionSuggestions.length > 0) {
+        completeMention();
+        return;
+      }
       if (showSuggestions && suggestions.length > 0) {
         const sel = suggestions[suggIdx];
         if (sel) {
@@ -1816,6 +1895,10 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
 
       {showSuggestions && !busy && suggestions.length > 0 && (
         <SuggestionsList items={suggestions} selectedIdx={suggIdx} />
+      )}
+
+      {showMentions && (
+        <MentionsList items={mentionSuggestions} selectedIdx={suggIdx} />
       )}
 
       {/* The chatbox + status footer are intentionally hidden while
@@ -2555,6 +2638,35 @@ function SuggestionsList({
   );
 }
 
+function MentionsList({
+  items,
+  selectedIdx,
+}: {
+  items: string[];
+  selectedIdx: number;
+}): React.ReactElement {
+  return (
+    <Box flexDirection="column" marginBottom={1} paddingX={1}>
+      <Text color="gray" dimColor>{'  files · ↑↓ select · tab/↵ insert'}</Text>
+      {items.map((f, i) => {
+        const isSel = i === selectedIdx;
+        const slash = f.lastIndexOf('/');
+        const dir = slash >= 0 ? f.slice(0, slash + 1) : '';
+        const base = slash >= 0 ? f.slice(slash + 1) : f;
+        return (
+          <Box key={f}>
+            <Text color={isSel ? 'green' : undefined} bold={isSel}>
+              {isSel ? '▸ ' : '  '}
+            </Text>
+            <Text color="gray" dimColor={!isSel}>{dir}</Text>
+            <Text color={isSel ? 'green' : undefined} bold={isSel}>{base}</Text>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
 function InputBox({
   value,
   cursor,
@@ -2577,7 +2689,7 @@ function InputBox({
   const placeholder = busy
     ? 'type a follow-up to queue it (or esc to interrupt)'
     : configured
-      ? 'prompt the agent — or type / for commands'
+      ? 'prompt the agent — / for commands, @ for files'
       : 'no provider configured — type /setup to add one (or / for commands)';
   return (
     <Box borderStyle="round" borderColor={borderColor} paddingX={1}>

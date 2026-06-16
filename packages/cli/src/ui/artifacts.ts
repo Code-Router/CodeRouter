@@ -1,6 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /**
  * Per-file diff stats. The REPL renders these as
@@ -165,45 +173,98 @@ export function loadArtifact(dir: string): RecordedRun | null {
   };
 }
 
+type ApplyResult =
+  | { ok: true; strategy: 'apply' | '3way'; overwrote?: string[] }
+  | { ok: false; error: string };
+
+/** Run `git apply <args>` in `repo`, capturing stderr on failure. */
+function gitApply(repo: string, args: string[]): { ok: true } | { ok: false; stderr: string } {
+  try {
+    execFileSync('git', ['apply', ...args], { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+    return { ok: true };
+  } catch (err) {
+    const stderr =
+      (err as { stderr?: Buffer }).stderr?.toString() ?? (err as Error).message ?? '';
+    return { ok: false, stderr };
+  }
+}
+
+/**
+ * Paths git refuses to apply because a "new file" patch targets a file
+ * that already exists on disk. git emits one
+ * `error: <path>: already exists in working directory` line per
+ * collision; we parse them so the caller can resolve the conflict.
+ */
+function parseAlreadyExists(stderr: string): string[] {
+  const out: string[] = [];
+  for (const raw of stderr.split('\n')) {
+    const m = /^error:\s+(.+?):\s+already exists in working directory\s*$/.exec(raw.trim());
+    if (m?.[1]) out.push(m[1]);
+  }
+  return [...new Set(out)];
+}
+
 /**
  * Apply a recorded patch back to the host repo using `git apply`.
- * Returns a structured outcome the REPL can render. Tries a plain
- * apply first, then a `--3way` retry to ride out small context
- * drift (the user may have edited files between the run and the
- * accept). On hard failure we keep the artifact on disk so the user
- * can inspect / fix it manually.
+ * Returns a structured outcome the REPL can render.
+ *
+ * Order of attempts:
+ *   1. Plain working-tree apply (NOT `--index` - auto-inited repos
+ *      leave files untracked, and `--index` hard-fails on any patch
+ *      touching an untracked file).
+ *   2. `--3way` to ride out small context drift on tracked files (the
+ *      user may have edited them between the run and the accept).
+ *   3. New-file collision recovery: when the patch *creates* a file
+ *      that already exists on disk (commonly an untracked artifact the
+ *      agent just regenerated, e.g. a freshly written test file), git
+ *      can't apply over it and `--3way` can't help (an untracked file
+ *      has no index blob to merge against). We back the existing file
+ *      up into the run dir, remove it, and re-apply so the agent's
+ *      authored content lands. Backups mean nothing is silently lost.
+ *
+ * On hard failure we keep the artifact on disk so the user can inspect
+ * / fix it manually.
  */
-export function applyArtifact(
-  repo: string,
-  artifact: RecordedRun,
-): { ok: true; strategy: 'apply' | '3way' } | { ok: false; error: string } {
+export function applyArtifact(repo: string, artifact: RecordedRun): ApplyResult {
   if (!existsSync(artifact.patchPath)) {
     return { ok: false, error: `patch missing: ${artifact.patchPath}` };
   }
-  try {
-    // Plain working-tree apply - NOT `--index`. Auto-inited repos
-    // leave pre-existing files untracked, and `git apply --index`
-    // hard-fails on any patch touching an untracked file ("does not
-    // exist in index"). Plain apply just needs the file on disk.
-    execFileSync('git', ['apply', artifact.patchPath], {
-      cwd: repo,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { ok: true, strategy: 'apply' };
-  } catch {
-    // first attempt failed — try a 3-way merge for context drift
+
+  const plain = gitApply(repo, [artifact.patchPath]);
+  if (plain.ok) return { ok: true, strategy: 'apply' };
+
+  // Non-destructive 3-way merge first (handles context drift).
+  const threeway = gitApply(repo, ['--3way', artifact.patchPath]);
+  if (threeway.ok) return { ok: true, strategy: '3way' };
+
+  // New-file collisions: only the *plain* attempt reports these
+  // ("already exists in working directory"). Resolve by backing up +
+  // removing the colliding files, then re-applying.
+  const collisions = parseAlreadyExists(plain.stderr);
+  if (collisions.length > 0) {
+    const backupDir = join(artifact.dir, 'overwritten');
+    const overwrote: string[] = [];
+    for (const rel of collisions) {
+      const abs = join(repo, rel);
+      if (!existsSync(abs)) continue;
+      try {
+        const dest = join(backupDir, rel);
+        mkdirSync(dirname(dest), { recursive: true });
+        copyFileSync(abs, dest);
+        rmSync(abs, { force: true });
+        overwrote.push(rel);
+      } catch {
+        // If we can't back up / remove, leave the file and let the
+        // retry fail so we don't lose data silently.
+      }
+    }
+    if (overwrote.length > 0) {
+      const retry = gitApply(repo, [artifact.patchPath]);
+      if (retry.ok) return { ok: true, strategy: 'apply', overwrote };
+    }
   }
-  try {
-    execFileSync('git', ['apply', '--3way', artifact.patchPath], {
-      cwd: repo,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { ok: true, strategy: '3way' };
-  } catch (err) {
-    const msg = (err as { stderr?: Buffer; message?: string }).stderr?.toString().trim()
-      || (err as Error).message;
-    return { ok: false, error: msg };
-  }
+
+  return { ok: false, error: threeway.stderr.trim() || plain.stderr.trim() };
 }
 
 /**
