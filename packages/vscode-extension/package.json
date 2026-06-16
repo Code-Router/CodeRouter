@@ -1,0 +1,99 @@
+{
+  "name": "coderouter-vscode",
+  "displayName": "CodeRouter",
+  "description": "Route every coding task to the best model. Chat REPL + live usage/cost dashboard, right inside VS Code and Cursor.",
+  "version": "0.1.0",
+  "publisher": "coderouter",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["AI", "Machine Learning", "Other"],
+  "keywords": ["ai", "agent", "llm", "router", "claude", "codex", "openrouter"],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "coderouter.openChat",
+        "title": "CodeRouter: Open Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "coderouter.openDashboard",
+        "title": "CodeRouter: Open Dashboard",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "coderouter.openDashboardInBrowser",
+        "title": "CodeRouter: Open Dashboard in Browser",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "coderouter.restartDashboard",
+        "title": "CodeRouter: Restart Dashboard Server",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "coderouter",
+          "title": "CodeRouter",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "coderouter": [
+        {
+          "id": "coderouter.home",
+          "name": "CodeRouter",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "coderouter.openDashboard",
+          "when": "view == coderouter.home",
+          "group": "navigation@1"
+        },
+        {
+          "command": "coderouter.openChat",
+          "when": "view == coderouter.home",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "CodeRouter",
+      "properties": {
+        "coderouter.cliPath": {
+          "type": "string",
+          "default": "coderouter",
+          "description": "Command used to launch the CodeRouter CLI. Defaults to 'coderouter' on your PATH. Set an absolute path if it isn't installed globally."
+        },
+        "coderouter.dashboardPort": {
+          "type": "number",
+          "default": 4319,
+          "description": "Preferred port for the local dashboard server. Falls through to the next free port if taken."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/vscode": "^1.85.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
