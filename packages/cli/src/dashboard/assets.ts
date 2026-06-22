@@ -192,6 +192,36 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; }
 }
 .select:focus { outline: none; border-color: var(--accent-dim); }
 .intro { color: var(--muted); font-size: 13px; line-height: 1.55; max-width: 660px; margin: -4px 0 4px; }
+
+/* Searchable model combobox */
+.panel.picker { overflow: visible; }
+.combo { position: relative; }
+.combo-input { width: 420px; padding-right: 30px; cursor: text; }
+.combo-input::placeholder { color: var(--muted-2); }
+.combo-caret { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted-2); font-size: 10px; pointer-events: none; }
+.combo-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 40;
+  max-height: 340px; overflow-y: auto; background: var(--bg-elev);
+  border: 1px solid var(--border-strong); border-radius: 9px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.5); padding: 5px;
+}
+.combo-menu.hidden { display: none; }
+.combo-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; font-family: ui-monospace, Menlo, monospace;
+}
+.combo-item:hover, .combo-item.active { background: var(--bg-elev-2); }
+.combo-item .ci-main { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.combo-item .ci-id { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-item.auto .ci-id, .combo-item.custom .ci-id { color: var(--muted); }
+.combo-item.selected .ci-id { color: var(--accent); }
+.combo-item .ci-meta { color: var(--muted-2); font-size: 11px; white-space: nowrap; flex: none; }
+.combo-cap { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--muted); flex: none; }
+.combo-cap.tools { color: #7fd6a3; border-color: rgba(110,200,150,.35); }
+.combo-cap.vision { color: #c8a8ff; border-color: rgba(186,140,255,.35); }
+.combo-note { padding: 9px 11px; color: var(--muted); font-size: 12px; }
+.combo-foot { padding: 7px 11px 4px; color: var(--muted-2); font-size: 11px; border-top: 1px solid var(--border); margin-top: 4px; }
 .tier-badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px; margin-left: 8px; }
 .tier-badge.strong { background: rgba(186,140,255,.14); color: #c8a8ff; }
 .tier-badge.cheap { background: rgba(110,200,150,.14); color: #7fd6a3; }
@@ -251,6 +281,8 @@ const fmtAgo = (ts) => {
 let usage = null;
 let settings = null;
 let current = 'overview';
+let orCatalog = null;       // { models: [...], error } once loaded
+let orCatalogLoading = false;
 
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -517,44 +549,153 @@ async function toggleHost(provider, enabled) {
   } catch (e) { toast('Failed: ' + e.message); }
 }
 
-function prefSelect(tier, models, current) {
-  const opts = ['<option value="">Automatic — let the router decide</option>']
-    .concat(models.map((m, i) =>
-      '<option value="' + i + '"' +
-      (current && current.provider === m.provider && current.model === m.model ? ' selected' : '') +
-      '>' + esc(m.label) + '</option>'));
-  return '<select class="select" data-pref-tier="' + tier + '">' + opts.join('') + '</select>';
-}
-
-function prefTierRow(tier, title, desc, models, current) {
+function prefTierRow(tier, title, desc, current) {
+  const val = current && current.model ? current.model : '';
   return '<div class="section">' +
     '<div class="section-title">' + esc(title) + '<span class="tier-badge ' + tier + '">' + tier + '</span></div>' +
-    '<div class="panel"><div class="setting-row"><div class="meta">' +
+    '<div class="panel picker"><div class="setting-row"><div class="meta">' +
       '<div class="title">Preferred model</div><div class="desc">' + esc(desc) + '</div></div>' +
-      '<div class="row-actions">' + prefSelect(tier, models, current) + '</div>' +
+      '<div class="row-actions" style="position:relative">' +
+        '<div class="combo" data-combo="' + tier + '">' +
+          '<input class="input combo-input" type="text" spellcheck="false" autocomplete="off" ' +
+            'placeholder="Automatic — let the router decide" value="' + esc(val) + '" ' +
+            'data-combo-input="' + tier + '" />' +
+          '<span class="combo-caret">▼</span>' +
+          '<div class="combo-menu hidden" data-combo-menu="' + tier + '"></div>' +
+        '</div>' +
+      '</div>' +
     '</div></div></div>';
+}
+
+function priceHint(m) {
+  if (!m.pricePer1MIn && !m.pricePer1MOut) return 'free';
+  const f = (n) => n >= 1 ? '$' + n.toFixed(2) : '$' + n.toFixed(3).replace(/0+$/, '').replace(/\\.$/, '');
+  return f(m.pricePer1MIn) + ' in / ' + f(m.pricePer1MOut) + ' out · 1M tok';
 }
 
 function renderModels() {
   const main = $('#view');
-  const models = settings.availableModels || [];
   const pref = settings.preferredModels || { strong: null, cheap: null };
   const head = '<div class="page-head"><h1>Models</h1></div>';
-  if (!models.length) {
-    main.innerHTML = head +
-      '<div class="empty">No routable models yet. Add an API key or enable a local CLI in Settings, then pick your preferred models here.</div>';
-    return;
-  }
+  const orReady = (settings.providers || []).some((p) => p.name === 'openrouter' && p.configured);
+  const keyNote = orReady ? '' :
+    '<p class="intro" style="color:var(--muted-2)">Tip: add an <strong>OpenRouter</strong> API key in Settings so these models can actually be routed to.</p>';
   main.innerHTML = head +
-    '<p class="intro">CodeRouter picks a model for every task automatically. Pin a preferred model below and routing will lean on it — your <strong>strong</strong> pick for complex work (deep reasoning, multi-file, huge context) and your <strong>cheap</strong> pick for trivial, cost-sensitive tasks. Leave either on <em>Automatic</em> to let the router decide.</p>' +
-    prefTierRow('strong', 'Complex work', 'Used for deep reasoning, multi-file refactors and long-context tasks.', models, pref.strong) +
-    prefTierRow('cheap', 'Trivial work', 'Used for quick edits, docs and other low-effort, cost-sensitive tasks.', models, pref.cheap);
-  main.querySelectorAll('[data-pref-tier]').forEach((sel) => sel.addEventListener('change', () => {
-    const tier = sel.dataset.prefTier;
-    const v = sel.value;
-    const model = v === '' ? null : (models[Number(v)] || null);
-    savePreferredModel(tier, model);
+    '<p class="intro">CodeRouter picks a model for every task automatically. Pin a preferred model below and routing will lean on it — your <strong>strong</strong> pick for complex work (deep reasoning, multi-file, huge context) and your <strong>cheap</strong> pick for trivial, cost-sensitive tasks. Search the full OpenRouter catalog, or type any model id. Leave either on <em>Automatic</em> to let the router decide.</p>' +
+    keyNote +
+    prefTierRow('strong', 'Complex work', 'Used for deep reasoning, multi-file refactors and long-context tasks.', pref.strong) +
+    prefTierRow('cheap', 'Trivial work', 'Used for quick edits, docs and other low-effort, cost-sensitive tasks.', pref.cheap);
+  main.querySelectorAll('[data-combo]').forEach(wireCombo);
+  loadOpenRouterCatalog();
+}
+
+async function loadOpenRouterCatalog() {
+  if (orCatalog || orCatalogLoading) return;
+  orCatalogLoading = true;
+  try {
+    orCatalog = await api('/api/openrouter-models');
+  } catch (e) {
+    orCatalog = { models: [], error: e.message };
+  } finally {
+    orCatalogLoading = false;
+    // Refresh any open menu now that data is available.
+    document.querySelectorAll('[data-combo]').forEach((c) => {
+      const menu = $('.combo-menu', c);
+      if (menu && !menu.classList.contains('hidden')) renderComboMenu(c);
+    });
+  }
+}
+
+function wireCombo(combo) {
+  const tier = combo.dataset.combo;
+  const input = $('.combo-input', combo);
+  let activeIdx = -1;
+
+  const open = () => { renderComboMenu(combo); $('.combo-menu', combo).classList.remove('hidden'); };
+  const close = () => { $('.combo-menu', combo).classList.add('hidden'); activeIdx = -1; };
+  combo._close = close;
+
+  input.addEventListener('focus', () => { input.select(); open(); });
+  input.addEventListener('click', () => open());
+  input.addEventListener('input', () => { activeIdx = -1; open(); });
+  input.addEventListener('keydown', (e) => {
+    const menu = $('.combo-menu', combo);
+    const items = Array.from(menu.querySelectorAll('.combo-item'));
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (menu.classList.contains('hidden')) return open(); activeIdx = Math.min(activeIdx + 1, items.length - 1); paintActive(items, activeIdx); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); paintActive(items, activeIdx); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activeIdx >= 0 && items[activeIdx]) {
+        const val = items[activeIdx].dataset.val;
+        commitCombo(tier, val ? { provider: 'openrouter_agent', model: val } : null);
+        return;
+      }
+      const v = input.value.trim();
+      commitCombo(tier, v ? { provider: 'openrouter_agent', model: v } : null);
+    }
+    else if (e.key === 'Escape') { close(); input.blur(); }
+  });
+  input.addEventListener('blur', () => setTimeout(() => {
+    if (!combo.matches(':focus-within')) close();
+  }, 120));
+}
+
+function paintActive(items, idx) {
+  items.forEach((it, i) => it.classList.toggle('active', i === idx));
+  if (items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
+}
+
+function renderComboMenu(combo) {
+  const tier = combo.dataset.combo;
+  const input = $('.combo-input', combo);
+  const menu = $('.combo-menu', combo);
+  const q = input.value.trim().toLowerCase();
+  const current = (settings.preferredModels || {})[tier];
+  const curModel = current && current.model ? current.model : '';
+
+  let html = '<div class="combo-item auto' + (curModel === '' ? ' selected' : '') +
+    '" data-val=""><div class="ci-main"><span class="ci-id">Automatic — let the router decide</span></div></div>';
+
+  if (orCatalogLoading && !orCatalog) {
+    html += '<div class="combo-note">Loading the OpenRouter catalog…</div>';
+  } else if (orCatalog && orCatalog.error && !orCatalog.models.length) {
+    html += '<div class="combo-note">Couldn\\'t reach the OpenRouter catalog. You can still type any model id and press Enter.</div>';
+  } else if (orCatalog) {
+    const all = orCatalog.models;
+    const matches = q
+      ? all.filter((m) => (m.id + ' ' + m.label).toLowerCase().includes(q))
+      : all;
+    const shown = matches.slice(0, 60);
+    for (const m of shown) {
+      const sel = m.id === curModel ? ' selected' : '';
+      const caps = (m.tools ? '<span class="combo-cap tools">tools</span>' : '') +
+        (m.vision ? '<span class="combo-cap vision">vision</span>' : '');
+      html += '<div class="combo-item' + sel + '" data-val="' + esc(m.id) + '">' +
+        '<div class="ci-main"><span class="ci-id">' + esc(m.id) + '</span>' + caps + '</div>' +
+        '<span class="ci-meta">' + esc(priceHint(m)) + '</span></div>';
+    }
+    const exact = all.some((m) => m.id === q || m.id.toLowerCase() === q);
+    if (q && !exact) {
+      html += '<div class="combo-item custom" data-val="' + esc(input.value.trim()) + '">' +
+        '<div class="ci-main"><span class="ci-id">Use "' + esc(input.value.trim()) + '"</span></div>' +
+        '<span class="ci-meta">custom id</span></div>';
+    }
+    if (!shown.length && !q) html += '<div class="combo-note">No models in the catalog.</div>';
+    else if (matches.length > shown.length) html += '<div class="combo-foot">' + (matches.length - shown.length) + ' more — keep typing to narrow down</div>';
+  }
+
+  menu.innerHTML = html;
+  menu.querySelectorAll('.combo-item').forEach((it) => it.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const val = it.dataset.val;
+    commitCombo(tier, val ? { provider: 'openrouter_agent', model: val } : null);
   }));
+}
+
+function commitCombo(tier, model) {
+  const combo = document.querySelector('[data-combo="' + tier + '"]');
+  if (combo && combo._close) combo._close();
+  savePreferredModel(tier, model);
 }
 
 async function savePreferredModel(tier, model) {

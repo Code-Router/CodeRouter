@@ -21,7 +21,7 @@ import {
 } from '../ui/setup.js';
 import type { HostProvider } from '../ui/hosts.js';
 import { INDEX_HTML } from './assets.js';
-import { buildSettingsReport, buildUsageReport } from './data.js';
+import { buildOpenRouterCatalog, buildSettingsReport, buildUsageReport } from './data.js';
 
 export type DashboardServer = {
   server: Server;
@@ -104,6 +104,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): P
 
   if (method === 'GET' && path === '/api/settings') {
     sendJson(res, 200, buildSettingsReport(cwd));
+    return;
+  }
+
+  if (method === 'GET' && path === '/api/openrouter-models') {
+    sendJson(res, 200, await buildOpenRouterCatalog());
     return;
   }
 

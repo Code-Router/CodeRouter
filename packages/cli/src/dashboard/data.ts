@@ -16,6 +16,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import {
   CATALOG,
   ProviderRegistry,
+  agent,
   defaultProviders,
   openStore,
   resolveDbPath,
@@ -138,7 +139,57 @@ export type SettingsReport = {
   paths: { credentials: string; db: string };
 };
 
+/** A single OpenRouter catalog model, trimmed to what the picker needs. */
+export type CatalogModel = {
+  /** OpenRouter id, e.g. `anthropic/claude-sonnet-4-5`. */
+  id: string;
+  /** Human label from the catalog (falls back to the id). */
+  label: string;
+  /** USD per 1M input / output tokens (0 when unknown or free). */
+  pricePer1MIn: number;
+  pricePer1MOut: number;
+  /** Max context window in tokens (0 when unknown). */
+  contextWindow: number;
+  /** Whether the model advertises tool-calling (needed for agent mode). */
+  tools: boolean;
+  /** Whether the model accepts image input. */
+  vision: boolean;
+};
+
+export type OpenRouterCatalog = {
+  models: CatalogModel[];
+  /** Non-null when the catalog couldn't be fetched (offline, no cache). */
+  error: string | null;
+};
+
 const HEATMAP_DAYS = 371; // 53 weeks, aligned to whole weeks in the UI.
+
+/**
+ * Fetch the entire OpenRouter model catalog for the model picker. OpenRouter's
+ * `/models` endpoint is public, so this works without an API key; results are
+ * cached on disk by core, so repeat calls are cheap. On failure (offline, no
+ * cache) we return an empty list plus an error message rather than throwing,
+ * so the picker degrades to free-text entry.
+ */
+export async function buildOpenRouterCatalog(): Promise<OpenRouterCatalog> {
+  try {
+    const all = await agent.openrouter.fetchOpenRouterModels();
+    const models: CatalogModel[] = all
+      .map((m) => ({
+        id: m.id,
+        label: m.name ?? m.id,
+        pricePer1MIn: agent.openrouter.pricePer1MIn(m),
+        pricePer1MOut: agent.openrouter.pricePer1MOut(m),
+        contextWindow: m.context_length ?? 0,
+        tools: agent.openrouter.isToolCapable(m),
+        vision: agent.openrouter.isVisionCapable(m),
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    return { models, error: null };
+  } catch (err) {
+    return { models: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 /**
  * Read every run for the project at `cwd` and fold it into the shape the
