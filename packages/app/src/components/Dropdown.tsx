@@ -31,6 +31,10 @@ type Props = {
   emptyText?: string;
   /** Custom footer note rendered at the bottom of the menu. */
   footer?: React.ReactNode;
+  /** Icon rendered at the start of the trigger button. */
+  leadingIcon?: React.ReactNode;
+  /** Native tooltip shown on hover over the trigger. */
+  title?: string;
 };
 
 /**
@@ -51,6 +55,8 @@ export function Dropdown({
   menuWidth,
   emptyText = 'No matches',
   footer,
+  leadingIcon,
+  title,
 }: Props): React.ReactElement {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -131,12 +137,16 @@ export function Dropdown({
       <button
         type="button"
         disabled={disabled}
+        title={title}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={onKeyDown}
         className={triggerCls}
       >
-        <span className={cls('min-w-0 truncate', !selected && 'text-muted')}>
-          {selected ? selected.buttonLabel ?? selected.label : placeholder}
+        <span className="flex min-w-0 items-center gap-1.5">
+          {leadingIcon}
+          <span className={cls('min-w-0 truncate', !selected && 'text-muted')}>
+            {selected ? selected.buttonLabel ?? selected.label : placeholder}
+          </span>
         </span>
         <ChevronDown className={cls('h-3.5 w-3.5 shrink-0 text-muted transition-transform', open && 'rotate-180')} />
       </button>

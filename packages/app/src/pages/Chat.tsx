@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Check, Copy, ListTodo, Mic, Paperclip, Plus, Square, Target } from 'lucide-react';
+import { ArrowUp, Check, Copy, Folder, ListTodo, Mic, Paperclip, Plus, Square, Target } from 'lucide-react';
 import { api, sendChat, type ProjectSummary } from '../lib/api';
 import { Spinner, cls, money } from '../components/common';
 import { Markdown } from '../components/Markdown';
@@ -355,14 +355,16 @@ function Composer({
         <Pill
           value={project ?? ''}
           onChange={(v) => (v === ADD_FOLDER ? onAddFolder?.() : onProjectChange(v))}
-          placeholder="no projects"
+          placeholder="no folder"
+          title="Working folder"
+          icon={<Folder className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />}
           options={[
             ...projects.map((p) => ({ value: p.cwd, label: p.name })),
             ...(onAddFolder ? [{ value: ADD_FOLDER, label: '+ Add folder…' }] : []),
           ]}
         />
-        <Pill value={mode} onChange={setMode} options={MODES.map((m) => ({ value: m, label: m }))} />
-        <Pill value={effort} onChange={setEffort} capitalize options={EFFORTS.map((e) => ({ value: e, label: e }))} />
+        <Pill value={mode} onChange={setMode} title="Mode" options={MODES.map((m) => ({ value: m, label: m }))} />
+        <Pill value={effort} onChange={setEffort} title="Reasoning effort" capitalize options={EFFORTS.map((e) => ({ value: e, label: e }))} />
 
         <div className="ml-auto flex items-center gap-1.5">
           {voiceSupported && (
@@ -468,18 +470,24 @@ function Pill({
   options,
   placeholder,
   capitalize,
+  icon,
+  title,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: Array<{ value: string; label: string }>;
   placeholder?: string;
   capitalize?: boolean;
+  icon?: React.ReactNode;
+  title?: string;
 }): React.ReactElement {
   return (
     <Dropdown
       value={value}
       onChange={onChange}
       placeholder={placeholder}
+      title={title}
+      leadingIcon={icon}
       options={options.map((o) => ({ value: o.value, label: o.label }))}
       size="sm"
       menuWidth="w-56"

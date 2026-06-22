@@ -12,9 +12,10 @@ import {
   PanelRight,
   RefreshCw,
   Settings as SettingsIcon,
+  Sparkles,
   SquarePen,
 } from 'lucide-react';
-import { api, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
+import { api, execCommand, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
 import { LoopEventsProvider, useDaemonConnected } from './lib/events';
 import { useTheme, type ThemePref } from './lib/theme';
 import { cls } from './components/common';
@@ -130,16 +131,7 @@ function Shell(): React.ReactElement {
     return [...extras, ...projects];
   }, [projects, addedProjects]);
 
-  const addFolder = async (): Promise<void> => {
-    let dir: string | null = null;
-    const picker = window.coderouter?.pickFolder;
-    if (picker) dir = await picker();
-    else {
-      const typed = window.prompt('Add a project folder (absolute path):');
-      dir = typed && typed.trim() ? typed.trim() : null;
-    }
-    if (!dir) return;
-    const path = dir;
+  const registerProject = (path: string): void => {
     setAddedProjects((prev) => {
       const next = prev.includes(path) ? prev : [path, ...prev];
       try {
@@ -152,6 +144,31 @@ function Shell(): React.ReactElement {
     setProject(path);
     setExpanded((e) => new Set(e).add(path));
     newChat();
+  };
+
+  // "Use an existing folder": native picker (Electron) or a path prompt.
+  const openExistingFolder = async (): Promise<void> => {
+    let dir: string | null = null;
+    const picker = window.coderouter?.pickFolder;
+    if (picker) dir = await picker();
+    else {
+      const typed = window.prompt('Open an existing project folder (absolute path):');
+      dir = typed && typed.trim() ? typed.trim() : null;
+    }
+    if (dir) registerProject(dir.trim());
+  };
+
+  // "Start from scratch": create a new folder via the daemon, then register it.
+  const createNewFolder = async (): Promise<void> => {
+    const typed = window.prompt('Create a new project folder (absolute path):');
+    const path = typed && typed.trim() ? typed.trim() : null;
+    if (!path) return;
+    try {
+      await execCommand({ cwd: '', command: `mkdir -p '${path.replace(/'/g, `'\\''`)}'` }, () => {});
+    } catch {
+      /* best effort — still register so the user can point at it */
+    }
+    registerProject(path);
   };
 
   const newChat = (): void => {
@@ -216,13 +233,10 @@ function Shell(): React.ReactElement {
 
           <SectionLabel
             action={
-              <button
-                onClick={() => void addFolder()}
-                title="Add a project folder"
-                className="no-drag flex h-5 w-5 items-center justify-center rounded text-muted transition-colors hover:bg-panel2 hover:text-text"
-              >
-                <FolderPlus className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
+              <AddProjectMenu
+                onCreate={() => void createNewFolder()}
+                onOpen={() => void openExistingFolder()}
+              />
             }
           >
             Projects
@@ -321,7 +335,7 @@ function Shell(): React.ReactElement {
                 project={project}
                 projects={allProjects}
                 onProjectChange={setProject}
-                onAddFolder={() => void addFolder()}
+                onAddFolder={() => void openExistingFolder()}
                 onChanges={setChanges}
                 onSessionCreated={(id) => {
                   setChatId(id);
@@ -381,6 +395,79 @@ function SectionLabel({ children, action }: { children: React.ReactNode; action?
       <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">{children}</span>
       {action}
     </div>
+  );
+}
+
+/** Projects "+" button → popup with "start from scratch" / "open existing". */
+function AddProjectMenu({ onCreate, onOpen }: { onCreate: () => void; onOpen: () => void }): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Add a project folder"
+        className={cls(
+          'no-drag flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-panel2 hover:text-text',
+          open ? 'text-text' : 'text-muted',
+        )}
+      >
+        <FolderPlus className="h-3.5 w-3.5" strokeWidth={2} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1.5 w-60 overflow-hidden rounded-lg border border-border bg-panel py-1 shadow-xl shadow-black/40">
+          <AddProjectRow
+            icon={Sparkles}
+            label="Start from scratch"
+            hint="Create a new empty folder"
+            onClick={() => {
+              setOpen(false);
+              onCreate();
+            }}
+          />
+          <AddProjectRow
+            icon={FolderOpen}
+            label="Use an existing folder"
+            hint="Pick a folder on your machine"
+            onClick={() => {
+              setOpen(false);
+              onOpen();
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddProjectRow({
+  icon: Icon,
+  label,
+  hint,
+  onClick,
+}: {
+  icon: LucideIcon;
+  label: string;
+  hint: string;
+  onClick: () => void;
+}): React.ReactElement {
+  return (
+    <button onClick={onClick} className="flex w-full items-start gap-2.5 px-3 py-2 text-left hover:bg-panel2">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted" strokeWidth={2} />
+      <span>
+        <span className="block text-sm text-text">{label}</span>
+        <span className="block text-xs text-muted">{hint}</span>
+      </span>
+    </button>
   );
 }
 
