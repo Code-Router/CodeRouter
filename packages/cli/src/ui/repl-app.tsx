@@ -31,6 +31,8 @@ import {
 import { isDirectoryTrusted, trustDirectory } from './trust.js';
 import { activeMention, listWorkspaceFiles, rankFiles } from './fileIndex.js';
 import { executeRun } from '../runtime.js';
+import { startDashboardServer, type DashboardServer } from '../dashboard/server.js';
+import { spawn } from 'node:child_process';
 import {
   BRAND_GLYPH,
   BRAND_NAME,
@@ -84,6 +86,7 @@ const COMMANDS: CommandDef[] = [
   { name: 'scan', hint: '<text>', desc: 'check text for prompt-injection markers' },
   { name: 'security', hint: 'warn|block', desc: 'set prompt-injection policy' },
   { name: 'models', hint: '[search]', desc: 'browse OpenRouter tool-capable models' },
+  { name: 'dashboard', hint: '', desc: 'open the usage + settings dashboard' },
   { name: 'runs', hint: '', desc: 'list saved run patches' },
   { name: 'accept', hint: '[runId]', desc: 'apply a saved run (latest if omitted)' },
   { name: 'reject', hint: '[runId]', desc: 'discard a saved run' },
@@ -94,6 +97,20 @@ const COMMANDS: CommandDef[] = [
 ];
 
 const MODE_COMMANDS = new Set(['plan', 'masterplan', 'agent', 'debug', 'review']);
+
+/** Best-effort cross-platform "open this URL in the default browser". */
+function openBrowser(url: string): void {
+  const platform = process.platform;
+  const cmd = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  try {
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    // The URL is already printed; the user can open it manually.
+  }
+}
 
 type HistoryItem =
   | { id: number; kind: 'welcome' }
@@ -204,6 +221,13 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // can fire after the Ink renderer is torn down.
   useEffect(() => {
     const cleanup = (): void => {
+      // Shut down the background dashboard server if `/dashboard` was
+      // used this session, so the port is released on exit.
+      const dash = dashboardRef.current;
+      if (dash) {
+        dashboardRef.current = null;
+        void dash.close().catch(() => {});
+      }
       const wt = currentWorktreeRef.current;
       if (!wt) return;
       // Use `git worktree remove --force` directly via the sandbox
@@ -384,6 +408,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // Persists across REPL turns, condensed when approaching the
   // context window limit.
   const conversationHistoryRef = useRef(new ConversationHistory());
+  // Background dashboard server, started on demand by `/dashboard` and
+  // reused across invocations so we never bind a second port.
+  const dashboardRef = useRef<DashboardServer | null>(null);
   // Long-lived agent worktree, kept alive across REPL turns. Without
   // this every prompt would spin up a fresh `/tmp/coderouter-XXX/`
   // worktree, which means (a) the model's cwd is different every
@@ -1381,6 +1408,19 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
             `  failed to fetch openrouter catalog: ${(err as Error).message}`,
             'warn',
           );
+        }
+        return;
+      }
+      case 'dashboard': {
+        try {
+          if (!dashboardRef.current) {
+            dashboardRef.current = await startDashboardServer({ cwd });
+          }
+          const url = dashboardRef.current.url;
+          openBrowser(url);
+          pushSystem(`  dashboard running at ${url} (opening in your browser)`, 'success');
+        } catch (err) {
+          pushSystem(`  failed to start dashboard: ${(err as Error).message}`, 'warn');
         }
         return;
       }
