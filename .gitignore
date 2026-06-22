@@ -16,8 +16,9 @@ coverage/
 !.coderouter/.gitkeep
 .bench/
 
-# Internal dev tooling (eval harness, benchmarks) — not shipped to users
+# Internal dev tooling (eval harness, benchmarks, local test scripts) — not shipped to users
 eval/
+scripts/fresh-user.sh
 
 *.log
 npm-debug.log*
