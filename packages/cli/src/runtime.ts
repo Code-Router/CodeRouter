@@ -1,8 +1,10 @@
 import {
   buildReport,
+  computeQualityBias,
   defaultProviders,
   deriveMemoryBias,
   loadConfig,
+  observationsFromRuns,
   openStore,
   ProviderRegistry,
   resolveDbPath,
@@ -142,6 +144,10 @@ export async function executeRun(opts: CliRunOpts): Promise<{
   }
   const store = await openStore(resolveDbPath(opts.cwd));
   const bias = deriveMemoryBias(store, { taskType: 'feature' });
+  // Hybrid refinement: blend benchmark priors with how each model has
+  // actually performed on this user's repos (bounded + shrinkage so it
+  // nudges near-ties without overturning the priors).
+  const qualityBias = computeQualityBias(observationsFromRuns(store.runs.list(500)));
   const { notifier, close } = opts.progress ?? spinnerProgress();
 
   try {
@@ -169,7 +175,12 @@ export async function executeRun(opts: CliRunOpts): Promise<{
       },
       {
         registry,
-        router: { registry, memoryBias: bias, preferredModels: resolvePreferredModels(registry) },
+        router: {
+          registry,
+          memoryBias: bias,
+          preferredModels: resolvePreferredModels(registry),
+          qualityBias,
+        },
         store,
       },
     );

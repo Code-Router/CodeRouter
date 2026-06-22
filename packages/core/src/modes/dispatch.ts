@@ -1,6 +1,7 @@
 import { runAgentMode } from './agent.js';
 import { runDebugMode } from './debug.js';
 import { runMasterplanMode } from './masterplan.js';
+import { runOrchestrateMode } from './orchestrate.js';
 import { runPlanMode } from './plan.js';
 import { runReviewMode } from './review.js';
 import type { Mode } from '../types.js';
@@ -24,6 +25,8 @@ export async function runMode(mode: Mode, input: ModeInput, ctx: ModeContext): P
       return runDebugMode(input, ctx);
     case 'review':
       return runReviewMode(input, ctx);
+    case 'orchestrate':
+      return runOrchestrateMode(input, ctx);
     default:
       throw new Error(`Unknown mode: ${String(mode)}`);
   }

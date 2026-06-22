@@ -20,8 +20,14 @@ import {
   SETUP_PROVIDERS,
 } from '../ui/setup.js';
 import type { HostProvider } from '../ui/hosts.js';
+import { customize } from '@coderouter/core';
 import { INDEX_HTML } from './assets.js';
-import { buildOpenRouterCatalog, buildSettingsReport, buildUsageReport } from './data.js';
+import {
+  buildAssetsReport,
+  buildOpenRouterCatalog,
+  buildSettingsReport,
+  buildUsageReport,
+} from './data.js';
 
 export type DashboardServer = {
   server: Server;
@@ -112,6 +118,23 @@ async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): P
     return;
   }
 
+  if (method === 'GET' && path === '/api/assets') {
+    sendJson(res, 200, await buildAssetsReport(cwd));
+    return;
+  }
+
+  // Mutating customization endpoints (rules / skills / subagents).
+  if (path.startsWith('/api/assets/')) {
+    if (!sameOrigin(req)) {
+      sendJson(res, 403, { error: 'cross-origin request rejected' });
+      return;
+    }
+    const body = await readJson(req);
+    const scope = body.scope === 'global' ? 'global' : 'project';
+    const handled = await handleAssetMutation(res, cwd, path, method, scope, body);
+    if (handled) return;
+  }
+
   // Everything below mutates global state — require same-origin.
   if (path.startsWith('/api/settings/')) {
     if (!sameOrigin(req)) {
@@ -174,6 +197,99 @@ async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): P
 /** Look up a provider by name across cloud + web-search credential lists. */
 function findCredentialProvider(name: unknown) {
   return [...SETUP_PROVIDERS, ...SEARCH_PROVIDERS].find((p) => p.name === name);
+}
+
+const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'max']);
+
+/**
+ * CRUD for rules / skills / subagents. Returns true when it handled the
+ * request (success or a validation error response), false when the path
+ * didn't match any asset route so the caller can fall through to 404.
+ */
+async function handleAssetMutation(
+  res: ServerResponse,
+  cwd: string,
+  path: string,
+  method: string,
+  scope: 'project' | 'global',
+  body: Record<string, unknown>,
+): Promise<boolean> {
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const arr = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v.map((x) => String(x).trim()).filter(Boolean)
+      : str(v)
+        ? str(v).split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
+
+  if (path === '/api/assets/rule') {
+    if (method === 'POST') {
+      const id = str(body.id) || str(body.description);
+      if (!id) return sendJson(res, 400, { error: 'id or description required' }), true;
+      if (!str(body.body)) return sendJson(res, 400, { error: 'body required' }), true;
+      const rule = await customize.writeRule(cwd, {
+        scope,
+        id,
+        description: str(body.description),
+        globs: arr(body.globs),
+        alwaysApply: Boolean(body.alwaysApply),
+        body: String(body.body),
+      });
+      return sendJson(res, 200, { ok: true, rule }), true;
+    }
+    if (method === 'DELETE') {
+      if (!str(body.id)) return sendJson(res, 400, { error: 'id required' }), true;
+      await customize.deleteRule(cwd, scope, str(body.id));
+      return sendJson(res, 200, { ok: true }), true;
+    }
+  }
+
+  if (path === '/api/assets/skill') {
+    if (method === 'POST') {
+      if (!str(body.name)) return sendJson(res, 400, { error: 'name required' }), true;
+      if (!str(body.body)) return sendJson(res, 400, { error: 'body required' }), true;
+      const skill = await customize.writeSkill(cwd, {
+        scope,
+        name: str(body.name),
+        description: str(body.description),
+        body: String(body.body),
+        slug: str(body.slug) || undefined,
+      });
+      return sendJson(res, 200, { ok: true, skill }), true;
+    }
+    if (method === 'DELETE') {
+      if (!str(body.slug)) return sendJson(res, 400, { error: 'slug required' }), true;
+      await customize.deleteSkill(cwd, scope, str(body.slug));
+      return sendJson(res, 200, { ok: true }), true;
+    }
+  }
+
+  if (path === '/api/assets/subagent') {
+    if (method === 'POST') {
+      if (!str(body.name)) return sendJson(res, 400, { error: 'name required' }), true;
+      if (!str(body.body)) return sendJson(res, 400, { error: 'body required' }), true;
+      const effort = VALID_EFFORTS.has(str(body.effort)) ? (str(body.effort) as never) : undefined;
+      const subagent = await customize.writeSubagent(cwd, {
+        scope,
+        name: str(body.name),
+        description: str(body.description),
+        kind: str(body.kind) || undefined,
+        provider: str(body.provider) || undefined,
+        model: str(body.model) || undefined,
+        effort,
+        body: String(body.body),
+        slug: str(body.slug) || undefined,
+      });
+      return sendJson(res, 200, { ok: true, subagent }), true;
+    }
+    if (method === 'DELETE') {
+      if (!str(body.slug)) return sendJson(res, 400, { error: 'slug required' }), true;
+      await customize.deleteSubagent(cwd, scope, str(body.slug));
+      return sendJson(res, 200, { ok: true }), true;
+    }
+  }
+
+  return false;
 }
 
 /**

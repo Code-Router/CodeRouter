@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { detectClarifications } from '../clarify/detector.js';
 import { ClassifierCascade, loadSeedCorpus } from '../classify/index.js';
 import { scanContext } from '../context/scan.js';
+import { composeDirectives } from '../customize/index.js';
 import { loadProjectMemory } from '../memory/projectMemory.js';
 import {
   BraveProvider,
@@ -54,6 +55,8 @@ export async function runMasterplanMode(
   const classifier = new ClassifierCascade({ corpus });
   const classification = await classifier.classify({ prompt: input.prompt, noLlm: true });
   const memory = await loadProjectMemory(input.cwd);
+  const directives = await composeDirectives(input.cwd).catch(() => '');
+  const memoryText = [memory.text, directives].filter(Boolean).join('\n\n');
   const clarifications = detectClarifications({ prompt: input.prompt, classification });
   progress({ phase: 'masterplan/phase1', stage: 'done', index: 1, total: 6 });
 
@@ -86,7 +89,7 @@ export async function runMasterplanMode(
   progress({ phase: 'masterplan/phase4', stage: 'start', index: 4, total: 6, message: 'synthesize' });
   const synthesizePrompt = buildPrompt({
     prompt: input.prompt,
-    memoryText: memory.text,
+    memoryText,
     manifestPaths: manifest.entries.map((e) => e.path),
     research,
   });

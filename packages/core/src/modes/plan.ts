@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { detectClarifications } from '../clarify/detector.js';
 import { ClassifierCascade, loadSeedCorpus } from '../classify/index.js';
 import { scanContext } from '../context/scan.js';
+import { composeDirectives } from '../customize/index.js';
 import { loadProjectMemory } from '../memory/projectMemory.js';
 import { pick } from '../router/policy.js';
 import { effortProfile } from '../router/effort.js';
@@ -36,6 +37,8 @@ export async function runPlanMode(input: ModeInput, ctx: ModeContext): Promise<M
   const classification = await classifier.classify({ prompt: input.prompt, cwd: input.cwd, noLlm: true });
 
   const memory = await loadProjectMemory(input.cwd);
+  const directives = await composeDirectives(input.cwd).catch(() => '');
+  const memoryText = [memory.text, directives].filter(Boolean).join('\n\n');
   const clarifications = detectClarifications({ prompt: input.prompt, classification });
   progress({ phase: 'plan/phase1', stage: 'done', index: 1, total: 3 });
 
@@ -54,7 +57,7 @@ export async function runPlanMode(input: ModeInput, ctx: ModeContext): Promise<M
   const profile = effortProfile(input.effort ?? 'medium');
   const planPrompt = buildPlannerPrompt({
     prompt: input.prompt,
-    memoryText: memory.text,
+    memoryText,
     manifestPaths: manifest.entries.map((e) => e.path),
   });
   const res = await (adapter.plan ?? adapter.run).call(adapter, {

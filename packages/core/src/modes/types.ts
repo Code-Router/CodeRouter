@@ -155,7 +155,7 @@ export type WorktreeHandle = {
 };
 
 export type ModeOutput = {
-  mode: 'plan' | 'masterplan' | 'agent' | 'debug' | 'review';
+  mode: 'plan' | 'masterplan' | 'agent' | 'debug' | 'review' | 'orchestrate';
   status: RunOutcome['status'];
   runId: string;
   /** Final rendered text artifact (plan markdown, debug hypothesis tree, etc). */

@@ -1,5 +1,6 @@
-import { resolveIntent } from '../catalog/resolve.js';
+import { EDITABLE_ADAPTERS, resolveIntent } from '../catalog/resolve.js';
 import type { Intent } from '../catalog/types.js';
+import { type QualityTier, taskFloor } from '../models/index.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { Classification, CognitiveShape, Effort, RouteRef } from '../types.js';
 import { effortProfile } from './effort.js';
@@ -35,6 +36,13 @@ export type RouterContext = {
    * back to its normal selection.
    */
   preferredModels?: { strong?: RouteRef; cheap?: RouteRef };
+  /**
+   * Per-model coding-score deltas learned from local run outcomes
+   * (see `models/learn.ts`). Bounded + shrinkage-weighted, so this
+   * nudges near-ties without overturning benchmark priors. Threaded
+   * into the quality-first selector at intent-resolution time.
+   */
+  qualityBias?: Map<string, number>;
 };
 
 /** Read-only handle into the persistent memory shape the router actually uses. */
@@ -59,6 +67,14 @@ export type PickOptions = {
    * available so the caller can warn + fall back to text-only.
    */
   requiresVision?: boolean;
+  /**
+   * When true, every route this call can return must be backed by an
+   * adapter that can edit files (`EDITABLE_ADAPTERS`). The orchestrator
+   * sets this for execution sub-tasks so a chat-only model is never
+   * handed a job that requires writing to the worktree. Non-editable
+   * shortcuts (preferred pins, memory, instant) are skipped.
+   */
+  requireEditable?: boolean;
 };
 
 const SHAPES_NEED_REASONING: (keyof CognitiveShape)[] = [
@@ -93,7 +109,12 @@ export function pick(
   //     the mode interprets as "no vision model available".
   if (opts.requiresVision) {
     const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
-    const visionOpts = { forbidRoutes, requireVision: true };
+    const visionOpts = {
+      forbidRoutes,
+      requireVision: true,
+      requireEditable: opts.requireEditable,
+      qualityBias: ctx.qualityBias,
+    };
     const intentsToTry: Intent[] = ['balanced-agent', 'multi-file', 'huge-context', 'deep-reasoning', 'fast-cheap'];
     for (const intent of intentsToTry) {
       const r = resolveIntent(intent, ctx.registry, visionOpts);
@@ -123,21 +144,26 @@ export function pick(
     if (isForbidden(ref, ctx)) continue;
     const providerName = ref.via ?? ref.provider;
     if (!ctx.registry.has(providerName) || !ctx.registry.isReady(providerName)) continue;
+    if (opts.requireEditable && !EDITABLE_ADAPTERS.has(ref.provider)) continue;
     return { ...ref, rationale: `memory: ${top.reason}` };
   }
 
   // 3) Instant routes (typo, format, commit-message...) always win.
   const instant = matchInstant(classification.rationale);
   if (instant.matched) {
-    const route = pickByHint(instant.pattern.route, ctx);
-    if (route) return { ...route, rationale: instant.pattern.rationale };
+    const route = pickByHint(instant.pattern.route, ctx, opts.requireEditable);
+    if (route && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(route.provider))) {
+      return { ...route, rationale: instant.pattern.rationale };
+    }
   }
 
   // 4) Force-cheap (handoff-fix); pick the cheapest capable route.
   if (opts.forceCheap) {
     const pref = usablePreferred(ctx, 'cheap');
-    if (pref) return { ...pref, rationale: 'preferred-cheap: handoff fix' };
-    const cheap = pickByHint('cheap', ctx);
+    if (pref && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(pref.provider))) {
+      return { ...pref, rationale: 'preferred-cheap: handoff fix' };
+    }
+    const cheap = pickByHint('cheap', ctx, opts.requireEditable);
     if (cheap) return { ...cheap, rationale: 'force-cheap: handoff fix' };
   }
 
@@ -145,8 +171,10 @@ export function pick(
   const { shape, taskType } = classification;
   if (taskType === 'trivial' || taskType === 'docs') {
     const pref = usablePreferred(ctx, 'cheap');
-    if (pref) return { ...pref, rationale: `preferred-cheap:${taskType}` };
-    const cheap = pickByHint('cheap', ctx);
+    if (pref && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(pref.provider))) {
+      return { ...pref, rationale: `preferred-cheap:${taskType}` };
+    }
+    const cheap = pickByHint('cheap', ctx, opts.requireEditable);
     if (cheap) return { ...cheap, rationale: `cheap-task:${taskType}` };
   }
 
@@ -156,8 +184,16 @@ export function pick(
   //     (codex / claude_code / ollama) win ties because they sit at
   //     the top of the catalog by convention.
   const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
+  // Quality-first floor for real coding work: high/max effort demands a
+  // frontier model; everything non-trivial wants at least a strong one.
+  const floor: QualityTier = taskFloor(classification, effort);
   const tryIntent = (intent: Intent, rationale: string): RouteRef | null => {
-    const ref = resolveIntent(intent, ctx.registry, { forbidRoutes });
+    const ref = resolveIntent(intent, ctx.registry, {
+      forbidRoutes,
+      floor,
+      qualityBias: ctx.qualityBias,
+      requireEditable: opts.requireEditable,
+    });
     return ref ? { ...ref, rationale } : null;
   };
 
@@ -169,7 +205,9 @@ export function pick(
     (SHAPES_NEED_REASONING.some((k) => shape[k] >= 0.7) && profile.reasoningEffort !== 'minimal');
   if (needsStrong) {
     const pref = usablePreferred(ctx, 'strong');
-    if (pref) return { ...pref, rationale: 'preferred-strong' };
+    if (pref && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(pref.provider))) {
+      return { ...pref, rationale: 'preferred-strong' };
+    }
   }
 
   if (shape.hugeContext > 0.7) {
@@ -227,7 +265,11 @@ export function pickStrong(
   const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
   const out: RouteRef[] = [];
   const pushIntent = (intent: Intent, rationale: string): void => {
-    const r = resolveIntent(intent, ctx.registry, { forbidRoutes });
+    const r = resolveIntent(intent, ctx.registry, {
+      forbidRoutes,
+      floor: 'frontier',
+      qualityBias: ctx.qualityBias,
+    });
     if (r) out.push({ ...r, rationale });
   };
 
@@ -285,15 +327,24 @@ function preferProvider(
 function pickByHint(
   hint: 'cheap' | 'haiku' | 'local',
   ctx: RouterContext,
+  requireEditable?: boolean,
 ): RouteRef | null {
   const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
   if (hint === 'local') {
-    return resolveIntent('local-offline', ctx.registry, { forbidRoutes });
+    return resolveIntent('local-offline', ctx.registry, {
+      forbidRoutes,
+      qualityBias: ctx.qualityBias,
+      requireEditable,
+    });
   }
   // 'haiku' and 'cheap' both resolve to fast-cheap; the haiku-specific
   // bias used to live in the explicit fallback order and now lives in
   // the catalog (Haiku is fast-cheap@rank2).
-  return resolveIntent('fast-cheap', ctx.registry, { forbidRoutes });
+  return resolveIntent('fast-cheap', ctx.registry, {
+    forbidRoutes,
+    qualityBias: ctx.qualityBias,
+    requireEditable,
+  });
 }
 
 function parseRouteRef(route: string): RouteRef | null {

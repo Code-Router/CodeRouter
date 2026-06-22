@@ -220,6 +220,10 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; }
 .combo-cap { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border-strong); color: var(--muted); flex: none; }
 .combo-cap.tools { color: #7fd6a3; border-color: rgba(110,200,150,.35); }
 .combo-cap.vision { color: #c8a8ff; border-color: rgba(186,140,255,.35); }
+.combo-cap.q-frontier { color: #ffd27f; border-color: rgba(255,200,110,.4); }
+.combo-cap.q-strong { color: #c8a8ff; border-color: rgba(186,140,255,.35); }
+.combo-cap.q-mid { color: #7fc2d6; border-color: rgba(110,180,200,.35); }
+.combo-cap.q-small { color: var(--muted); border-color: var(--border-strong); }
 .combo-note { padding: 9px 11px; color: var(--muted); font-size: 12px; }
 .combo-foot { padding: 7px 11px 4px; color: var(--muted-2); font-size: 11px; border-top: 1px solid var(--border); margin-top: 4px; }
 .tier-badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 5px; margin-left: 8px; }
@@ -231,6 +235,30 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; }
 .toggle .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: all .15s ease; }
 .toggle.on { background: var(--accent-dim); border-color: var(--accent-dim); }
 .toggle.on .knob { left: 18px; background: #fff; }
+
+/* Customize (rules / skills / subagents) */
+.scope-pill { font-size: 10px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted); margin-left: 8px; }
+.scope-pill.project { color: #7fd6a3; border-color: rgba(110,200,150,.35); }
+.scope-pill.global { color: #c8a8ff; border-color: rgba(186,140,255,.35); }
+.chip { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 5px; border: 1px solid var(--border-strong); color: var(--muted); margin-right: 6px; margin-top: 4px; font-family: ui-monospace, Menlo, monospace; }
+.chip.on { color: var(--accent); border-color: var(--accent-dim); }
+.asset-body { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: pre-wrap; max-height: 60px; overflow: hidden; font-family: ui-monospace, Menlo, monospace; }
+.editor { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 20px; }
+.editor h3 { margin: 0 0 14px; font-size: 15px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.field label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.field .input, .field .select { width: 100%; }
+.field-row { display: flex; gap: 14px; }
+.field-row .field { flex: 1; }
+.textarea {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border-strong);
+  padding: 10px 12px; border-radius: 7px; font-size: 13px; width: 100%; min-height: 150px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.5; resize: vertical;
+}
+.textarea:focus, .field .input:focus, .field .select:focus { outline: none; border-color: var(--accent-dim); }
+.editor-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 13px; }
+.check input { width: 15px; height: 15px; accent-color: var(--accent); }
 
 .empty { color: var(--muted); padding: 40px; text-align: center; border: 1px dashed var(--border-strong); border-radius: var(--radius); }
 .toast { position: fixed; bottom: 22px; right: 22px; background: var(--bg-elev-2); border: 1px solid var(--border-strong); padding: 12px 16px; border-radius: 8px; opacity: 0; transform: translateY(8px); transition: all .2s ease; pointer-events: none; }
@@ -283,6 +311,10 @@ let settings = null;
 let current = 'overview';
 let orCatalog = null;       // { models: [...], error } once loaded
 let orCatalogLoading = false;
+let assets = null;          // { rules, skills, subagents, roots }
+let assetTab = 'rules';
+let assetEditor = null;     // { kind, item } when an editor is open, else null
+const SUBTASK_KINDS = ['architecture', 'feature', 'bugfix', 'refactor', 'test', 'docs', 'mechanical'];
 
 async function api(path, opts) {
   const res = await fetch(path, opts);
@@ -668,7 +700,11 @@ function renderComboMenu(combo) {
     const shown = matches.slice(0, 60);
     for (const m of shown) {
       const sel = m.id === curModel ? ' selected' : '';
-      const caps = (m.tools ? '<span class="combo-cap tools">tools</span>' : '') +
+      const qual = m.tier
+        ? '<span class="combo-cap q-' + esc(m.tier) + '">' + esc(m.tier) + ' ' + Math.round(m.coding || 0) + '</span>'
+        : '';
+      const caps = qual +
+        (m.tools ? '<span class="combo-cap tools">tools</span>' : '') +
         (m.vision ? '<span class="combo-cap vision">vision</span>' : '');
       html += '<div class="combo-item' + sel + '" data-val="' + esc(m.id) + '">' +
         '<div class="ci-main"><span class="ci-id">' + esc(m.id) + '</span>' + caps + '</div>' +
@@ -707,6 +743,279 @@ async function savePreferredModel(tier, model) {
   } catch (e) { toast('Failed: ' + e.message); }
 }
 
+// --- Customize: rules / skills / subagents ---------------------------
+
+async function loadAssets() { assets = await api('/api/assets'); }
+
+function scopePill(scope) {
+  return '<span class="scope-pill ' + esc(scope) + '">' + esc(scope) + '</span>';
+}
+
+function assetListEmpty(kind) {
+  const what = kind === 'rules' ? 'rules' : kind === 'skills' ? 'skills' : 'subagents';
+  return '<div class="empty">No ' + what + ' yet. Click <strong>New</strong> to create one.</div>';
+}
+
+function ruleItem(r) {
+  const flags =
+    (r.alwaysApply ? '<span class="chip on">always apply</span>' : '') +
+    (r.globs && r.globs.length ? r.globs.map((g) => '<span class="chip">' + esc(g) + '</span>').join('') : '');
+  return '<div class="setting-row"><div class="meta" style="min-width:0">' +
+    '<div class="title">' + esc(r.description || r.id) + scopePill(r.scope) + '</div>' +
+    '<div class="key">' + esc(r.path) + '</div>' +
+    '<div>' + (flags || '<span class="chip">manual</span>') + '</div>' +
+    (r.body ? '<div class="asset-body">' + esc(r.body) + '</div>' : '') +
+    '</div><div class="row-actions">' +
+    '<button class="btn" data-edit-rule="' + esc(r.scope) + ':' + esc(r.id) + '">Edit</button>' +
+    '<button class="btn danger" data-del-rule="' + esc(r.scope) + ':' + esc(r.id) + '">Delete</button>' +
+    '</div></div>';
+}
+
+function skillItem(s) {
+  return '<div class="setting-row"><div class="meta" style="min-width:0">' +
+    '<div class="title">' + esc(s.name) + scopePill(s.scope) + '</div>' +
+    '<div class="desc">' + esc(s.description || '(no description)') + '</div>' +
+    '<div class="key">' + esc(s.path) + '</div>' +
+    (s.body ? '<div class="asset-body">' + esc(s.body) + '</div>' : '') +
+    '</div><div class="row-actions">' +
+    '<button class="btn" data-edit-skill="' + esc(s.scope) + ':' + esc(s.slug) + '">Edit</button>' +
+    '<button class="btn danger" data-del-skill="' + esc(s.scope) + ':' + esc(s.slug) + '">Delete</button>' +
+    '</div></div>';
+}
+
+function subagentItem(s) {
+  const chips =
+    (s.kind ? '<span class="chip">' + esc(s.kind) + '</span>' : '') +
+    (s.model ? '<span class="chip">' + esc((s.provider ? s.provider + ':' : '') + s.model) + '</span>' : '') +
+    (s.effort ? '<span class="chip">' + esc(s.effort) + '</span>' : '');
+  return '<div class="setting-row"><div class="meta" style="min-width:0">' +
+    '<div class="title">' + esc(s.name) + scopePill(s.scope) + '</div>' +
+    '<div class="desc">' + esc(s.description || '(no description)') + '</div>' +
+    '<div>' + (chips || '<span class="chip">kind-routed</span>') + '</div>' +
+    (s.body ? '<div class="asset-body">' + esc(s.body) + '</div>' : '') +
+    '</div><div class="row-actions">' +
+    '<button class="btn" data-edit-sub="' + esc(s.scope) + ':' + esc(s.slug) + '">Edit</button>' +
+    '<button class="btn danger" data-del-sub="' + esc(s.scope) + ':' + esc(s.slug) + '">Delete</button>' +
+    '</div></div>';
+}
+
+function scopeSelect(val) {
+  return '<select class="select" data-f="scope">' +
+    '<option value="project"' + (val === 'global' ? '' : ' selected') + '>Project — .coderouter/ in this repo</option>' +
+    '<option value="global"' + (val === 'global' ? ' selected' : '') + '>Global — ~/.coderouter/ (all projects)</option>' +
+    '</select>';
+}
+
+function ruleEditor(item) {
+  const r = item || { scope: 'project', id: '', description: '', globs: [], alwaysApply: false, body: '' };
+  const editing = !!item;
+  return '<div class="editor"><h3>' + (editing ? 'Edit rule' : 'New rule') + '</h3>' +
+    '<div class="field-row">' +
+      '<div class="field"><label>Scope</label>' + scopeSelect(r.scope) + '</div>' +
+      '<div class="field"><label>Name / id</label><input class="input" data-f="id" ' +
+        (editing ? 'readonly ' : '') + 'placeholder="e.g. typescript-style" value="' + esc(r.id) + '" /></div>' +
+    '</div>' +
+    '<div class="field"><label>Description</label><input class="input" data-f="description" placeholder="When/why this rule applies" value="' + esc(r.description) + '" /></div>' +
+    '<div class="field-row">' +
+      '<div class="field"><label>Globs (comma-separated, optional)</label><input class="input" data-f="globs" placeholder="src/**/*.ts, *.tsx" value="' + esc((r.globs || []).join(', ')) + '" /></div>' +
+      '<div class="field" style="flex:0 0 auto;justify-content:flex-end"><label class="check"><input type="checkbox" data-f="alwaysApply"' + (r.alwaysApply ? ' checked' : '') + ' /> Always apply</label></div>' +
+    '</div>' +
+    '<div class="field"><label>Rule</label><textarea class="textarea" data-f="body" placeholder="Write the instruction the agent should follow…">' + esc(r.body) + '</textarea></div>' +
+    '<div class="editor-actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save-rule>Save rule</button></div>' +
+    '</div>';
+}
+
+function skillEditor(item) {
+  const s = item || { scope: 'project', name: '', description: '', body: '', slug: '' };
+  const editing = !!item;
+  return '<div class="editor"><h3>' + (editing ? 'Edit skill' : 'New skill') + '</h3>' +
+    '<div class="field-row">' +
+      '<div class="field"><label>Scope</label>' + scopeSelect(s.scope) + '</div>' +
+      '<div class="field"><label>Name</label><input class="input" data-f="name" placeholder="e.g. Database migrations" value="' + esc(s.name) + '" /></div>' +
+    '</div>' +
+    '<div class="field"><label>Description</label><input class="input" data-f="description" placeholder="When the agent should reach for this skill" value="' + esc(s.description) + '" /></div>' +
+    '<div class="field"><label>Skill instructions (SKILL.md body)</label><textarea class="textarea" data-f="body" placeholder="Steps / domain knowledge the agent follows when this skill applies…">' + esc(s.body) + '</textarea></div>' +
+    (editing ? '<input type="hidden" data-f="slug" value="' + esc(s.slug) + '" />' : '') +
+    '<div class="editor-actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save-skill>Save skill</button></div>' +
+    '</div>';
+}
+
+function subagentEditor(item) {
+  const s = item || { scope: 'project', name: '', description: '', kind: '', provider: '', model: '', effort: '', body: '', slug: '' };
+  const editing = !!item;
+  const kindOpts = '<option value="">(route by kind automatically)</option>' +
+    SUBTASK_KINDS.map((k) => '<option value="' + k + '"' + (s.kind === k ? ' selected' : '') + '>' + k + '</option>').join('');
+  const effortOpts = '<option value="">(default for kind)</option>' +
+    ['low', 'medium', 'high', 'max'].map((e) => '<option value="' + e + '"' + (s.effort === e ? ' selected' : '') + '>' + e + '</option>').join('');
+  return '<div class="editor"><h3>' + (editing ? 'Edit subagent' : 'New subagent') + '</h3>' +
+    '<div class="field-row">' +
+      '<div class="field"><label>Scope</label>' + scopeSelect(s.scope) + '</div>' +
+      '<div class="field"><label>Name</label><input class="input" data-f="name" placeholder="e.g. Test Author" value="' + esc(s.name) + '" /></div>' +
+    '</div>' +
+    '<div class="field"><label>Description</label><input class="input" data-f="description" placeholder="What this specialist is good at (shown to the planner)" value="' + esc(s.description) + '" /></div>' +
+    '<div class="field-row">' +
+      '<div class="field"><label>Specializes in (kind)</label><select class="select" data-f="kind">' + kindOpts + '</select></div>' +
+      '<div class="field"><label>Effort</label><select class="select" data-f="effort">' + effortOpts + '</select></div>' +
+    '</div>' +
+    '<div class="field-row">' +
+      '<div class="field"><label>Pinned provider (optional)</label><input class="input" data-f="provider" placeholder="e.g. openrouter_agent" value="' + esc(s.provider || '') + '" /></div>' +
+      '<div class="field"><label>Pinned model (optional)</label><input class="input" data-f="model" placeholder="e.g. anthropic/claude-opus-4-5" value="' + esc(s.model || '') + '" /></div>' +
+    '</div>' +
+    '<div class="field"><label>Instructions</label><textarea class="textarea" data-f="body" placeholder="System instructions injected when this subagent runs a sub-task…">' + esc(s.body) + '</textarea></div>' +
+    (editing ? '<input type="hidden" data-f="slug" value="' + esc(s.slug) + '" />' : '') +
+    '<div class="editor-actions"><button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save-sub>Save subagent</button></div>' +
+    '</div>';
+}
+
+function renderAssets() {
+  const main = $('#view');
+  const a = assets || { rules: [], skills: [], subagents: [], roots: { project: '', global: '' } };
+  const tabBtn = (id, label, n) => '<div class="tab ' + (assetTab === id ? 'active' : '') + '" data-atab="' + id + '">' + label + ' (' + n + ')</div>';
+
+  let editorHtml = '';
+  if (assetEditor) {
+    if (assetEditor.kind === 'rule') editorHtml = ruleEditor(assetEditor.item);
+    else if (assetEditor.kind === 'skill') editorHtml = skillEditor(assetEditor.item);
+    else if (assetEditor.kind === 'subagent') editorHtml = subagentEditor(assetEditor.item);
+  }
+
+  let listHtml = '';
+  let newKind = 'rule';
+  if (assetTab === 'rules') {
+    newKind = 'rule';
+    listHtml = a.rules.length ? '<div class="panel">' + a.rules.map(ruleItem).join('') + '</div>' : assetListEmpty('rules');
+  } else if (assetTab === 'skills') {
+    newKind = 'skill';
+    listHtml = a.skills.length ? '<div class="panel">' + a.skills.map(skillItem).join('') + '</div>' : assetListEmpty('skills');
+  } else {
+    newKind = 'subagent';
+    listHtml = a.subagents.length ? '<div class="panel">' + a.subagents.map(subagentItem).join('') + '</div>' : assetListEmpty('subagents');
+  }
+
+  const intros = {
+    rules: 'Rules are persistent instructions injected into the agent\\'s system prompt. <strong>Always apply</strong> rules ride along on every run; rules with <strong>globs</strong> are surfaced as conditional and applied when matching files are touched.',
+    skills: 'Skills are capability docs (SKILL.md). The agent sees each skill\\'s name + description and reads the file on demand when a task matches.',
+    subagents: 'Subagents are typed execution presets the <span class="mono">orchestrate</span> mode routes sub-tasks to — optionally pinning a model/effort and always injecting their instructions. Match a sub-task <strong>kind</strong> or let the planner pick by name.',
+  };
+
+  main.innerHTML =
+    '<div class="page-head"><h1>Rules &amp; Skills</h1>' +
+      '<div class="tabs">' + tabBtn('rules', 'Rules', a.rules.length) + tabBtn('skills', 'Skills', a.skills.length) + tabBtn('subagents', 'Subagents', a.subagents.length) + '</div>' +
+    '</div>' +
+    '<p class="intro">' + intros[assetTab] + '</p>' +
+    '<div class="section"><div class="page-head" style="margin-bottom:14px"><div class="section-title" style="margin:0">' +
+      (assetTab === 'rules' ? 'Rules' : assetTab === 'skills' ? 'Skills' : 'Subagents') + '</div>' +
+      '<button class="btn primary" data-new="' + newKind + '">New ' + newKind + '</button></div>' +
+      editorHtml +
+      listHtml +
+    '</div>';
+
+  // Tabs
+  main.querySelectorAll('[data-atab]').forEach((t) => t.addEventListener('click', () => {
+    assetTab = t.dataset.atab; assetEditor = null; renderAssets();
+  }));
+  // New / cancel
+  const newBtn = main.querySelector('[data-new]');
+  if (newBtn) newBtn.addEventListener('click', () => { assetEditor = { kind: newBtn.dataset.new, item: null }; renderAssets(); });
+  const cancelBtn = main.querySelector('[data-cancel]');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => { assetEditor = null; renderAssets(); });
+  // Save handlers
+  const sr = main.querySelector('[data-save-rule]'); if (sr) sr.addEventListener('click', () => saveRule(main));
+  const ss = main.querySelector('[data-save-skill]'); if (ss) ss.addEventListener('click', () => saveSkill(main));
+  const sa = main.querySelector('[data-save-sub]'); if (sa) sa.addEventListener('click', () => saveSubagent(main));
+  // Edit handlers
+  main.querySelectorAll('[data-edit-rule]').forEach((b) => b.addEventListener('click', () => openEdit('rule', b.dataset.editRule)));
+  main.querySelectorAll('[data-edit-skill]').forEach((b) => b.addEventListener('click', () => openEdit('skill', b.dataset.editSkill)));
+  main.querySelectorAll('[data-edit-sub]').forEach((b) => b.addEventListener('click', () => openEdit('subagent', b.dataset.editSub)));
+  // Delete handlers
+  main.querySelectorAll('[data-del-rule]').forEach((b) => b.addEventListener('click', () => delAsset('rule', b.dataset.delRule)));
+  main.querySelectorAll('[data-del-skill]').forEach((b) => b.addEventListener('click', () => delAsset('skill', b.dataset.delSkill)));
+  main.querySelectorAll('[data-del-sub]').forEach((b) => b.addEventListener('click', () => delAsset('subagent', b.dataset.delSub)));
+}
+
+function findAsset(list, scope, key, keyField) {
+  return (list || []).find((x) => x.scope === scope && x[keyField] === key) || null;
+}
+
+function openEdit(kind, ref) {
+  const [scope, key] = ref.split(/:(.+)/);
+  if (kind === 'rule') assetEditor = { kind, item: findAsset(assets.rules, scope, key, 'id') };
+  else if (kind === 'skill') assetEditor = { kind, item: findAsset(assets.skills, scope, key, 'slug') };
+  else assetEditor = { kind, item: findAsset(assets.subagents, scope, key, 'slug') };
+  renderAssets();
+}
+
+function fieldVal(root, name) {
+  const node = root.querySelector('[data-f="' + name + '"]');
+  if (!node) return '';
+  if (node.type === 'checkbox') return node.checked;
+  return node.value.trim();
+}
+
+async function saveRule(root) {
+  const body = {
+    scope: fieldVal(root, 'scope'),
+    id: fieldVal(root, 'id'),
+    description: fieldVal(root, 'description'),
+    globs: fieldVal(root, 'globs'),
+    alwaysApply: fieldVal(root, 'alwaysApply'),
+    body: root.querySelector('[data-f="body"]').value,
+  };
+  if (!body.id && !body.description) { toast('Give the rule a name'); return; }
+  if (!body.body.trim()) { toast('Rule body is empty'); return; }
+  try {
+    await api('/api/assets/rule', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    toast('Saved rule'); assetEditor = null; await loadAssets(); renderAssets();
+  } catch (e) { toast('Failed: ' + e.message); }
+}
+
+async function saveSkill(root) {
+  const body = {
+    scope: fieldVal(root, 'scope'),
+    name: fieldVal(root, 'name'),
+    slug: fieldVal(root, 'slug'),
+    description: fieldVal(root, 'description'),
+    body: root.querySelector('[data-f="body"]').value,
+  };
+  if (!body.name) { toast('Give the skill a name'); return; }
+  if (!body.body.trim()) { toast('Skill body is empty'); return; }
+  try {
+    await api('/api/assets/skill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    toast('Saved skill'); assetEditor = null; await loadAssets(); renderAssets();
+  } catch (e) { toast('Failed: ' + e.message); }
+}
+
+async function saveSubagent(root) {
+  const body = {
+    scope: fieldVal(root, 'scope'),
+    name: fieldVal(root, 'name'),
+    slug: fieldVal(root, 'slug'),
+    description: fieldVal(root, 'description'),
+    kind: fieldVal(root, 'kind'),
+    provider: fieldVal(root, 'provider'),
+    model: fieldVal(root, 'model'),
+    effort: fieldVal(root, 'effort'),
+    body: root.querySelector('[data-f="body"]').value,
+  };
+  if (!body.name) { toast('Give the subagent a name'); return; }
+  if (!body.body.trim()) { toast('Subagent instructions are empty'); return; }
+  try {
+    await api('/api/assets/subagent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    toast('Saved subagent'); assetEditor = null; await loadAssets(); renderAssets();
+  } catch (e) { toast('Failed: ' + e.message); }
+}
+
+async function delAsset(kind, ref) {
+  const [scope, key] = ref.split(/:(.+)/);
+  if (!confirm('Delete this ' + kind + '? This removes the file on disk.')) return;
+  const path = '/api/assets/' + kind;
+  const body = kind === 'rule' ? { scope, id: key } : { scope, slug: key };
+  try {
+    await api(path, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    toast('Deleted ' + kind); assetEditor = null; await loadAssets(); renderAssets();
+  } catch (e) { toast('Failed: ' + e.message); }
+}
+
 async function loadUsage() { usage = await api('/api/usage'); }
 async function loadSettings() { settings = await api('/api/settings'); }
 
@@ -717,7 +1026,16 @@ function setView(name) {
   else if (name === 'usage') renderUsage();
   else if (name === 'spending') renderSpending();
   else if (name === 'models') renderModels();
+  else if (name === 'customize') renderCustomize();
   else if (name === 'settings') renderSettings();
+}
+
+async function renderCustomize() {
+  if (!assets) {
+    $('#view').innerHTML = '<div class="page-head"><h1>Rules &amp; Skills</h1></div><div class="empty">Loading…</div>';
+    try { await loadAssets(); } catch (e) { $('#view').innerHTML = '<div class="empty">Failed to load: ' + esc(e.message) + '</div>'; return; }
+  }
+  if (current === 'customize') renderAssets();
 }
 
 async function boot() {
@@ -748,6 +1066,7 @@ export const INDEX_HTML = /* html */ `<!DOCTYPE html>
       <div class="nav-item" data-view="usage"><span class="dot"></span>Usage</div>
       <div class="nav-item" data-view="spending"><span class="dot"></span>Spending</div>
       <div class="nav-item" data-view="models"><span class="dot"></span>Models</div>
+      <div class="nav-item" data-view="customize"><span class="dot"></span>Rules &amp; Skills</div>
       <div class="nav-item" data-view="settings"><span class="dot"></span>Settings</div>
       <div class="spacer"></div>
       <div class="footer">Local · 127.0.0.1<br/>route smarter. build faster.</div>

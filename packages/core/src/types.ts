@@ -8,7 +8,7 @@
 
 export type Effort = 'low' | 'medium' | 'high' | 'max';
 
-export type Mode = 'plan' | 'masterplan' | 'agent' | 'debug' | 'review';
+export type Mode = 'plan' | 'masterplan' | 'agent' | 'debug' | 'review' | 'orchestrate';
 
 export type TaskType =
   | 'feature'

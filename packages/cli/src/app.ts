@@ -40,7 +40,7 @@ export async function runCli(argv: string[]): Promise<void> {
   program
     .command('run <prompt...>')
     .description('run a single prompt non-interactively')
-    .option('-m, --mode <mode>', 'plan|masterplan|agent|debug|review', 'agent')
+    .option('-m, --mode <mode>', 'plan|masterplan|agent|orchestrate|debug|review', 'agent')
     .option('-e, --effort <effort>', 'low|medium|high|max', 'medium')
     .option('--fast', 'skip classifier/context/validators', false)
     .option('--apply', 'apply diff to working tree on success', false)
@@ -52,11 +52,15 @@ export async function runCli(argv: string[]): Promise<void> {
     });
 
   // Mode commands (aliases for `run -m <mode>`)
-  for (const m of ['plan', 'masterplan', 'agent', 'debug', 'review'] as const) {
+  for (const m of ['plan', 'masterplan', 'agent', 'orchestrate', 'debug', 'review'] as const) {
     program
       .command(`${m} [prompt...]`)
       .description(`run CodeRouter in ${m} mode`)
-      .option('-e, --effort <effort>', 'low|medium|high|max', m === 'masterplan' ? 'high' : 'medium')
+      .option(
+        '-e, --effort <effort>',
+        'low|medium|high|max',
+        m === 'masterplan' || m === 'orchestrate' ? 'high' : 'medium',
+      )
       .option('--fast', 'skip classifier/context/validators', false)
       .option('--apply', 'apply diff to working tree on success', false)
       .option('-c, --cwd <path>', 'working directory', process.cwd())

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { buildSystemPrompt } from '../agent/systemPrompt.js';
 import { ClassifierCascade, loadSeedCorpus } from '../classify/index.js';
+import { composeDirectives } from '../customize/index.js';
 import { scanContext } from '../context/scan.js';
 import { detectPromptImages } from '../context/images.js';
 import { fastClassification } from '../router/fast.js';
@@ -212,10 +214,19 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   // id) just produce a fresh conversation - adapters tolerate
   // missing/invalid resume ids by design.
   const resumeSessionId = input.resumeSessions?.[route.provider];
+
+  // Inject the user's rules + available skills into the system prompt.
+  // Read from the real repo (input.cwd) so both project (.coderouter/)
+  // and global (~/.coderouter/) directives resolve even though the
+  // agent runs inside a forked worktree. Skipped in --fast.
+  const directives = input.fast ? '' : await composeDirectives(input.cwd).catch(() => '');
+  const systemPrompt = directives ? buildSystemPrompt({ append: directives }) : undefined;
+
   let res;
   try {
     res = await adapter.run({
       prompt: input.prompt,
+      systemPrompt,
       cwd: wt.path,
       images: images.length > 0 ? images : undefined,
       reasoningEffort: profile.reasoningEffort,

@@ -17,10 +17,13 @@ import {
   CATALOG,
   ProviderRegistry,
   agent,
+  customize,
   defaultProviders,
+  models,
   openStore,
   resolveDbPath,
 } from '@coderouter/core';
+import type { Rule, Skill, Subagent } from '@coderouter/core';
 import type { RunRecord } from '@coderouter/core/store';
 import {
   CREDENTIALS_PATH,
@@ -154,6 +157,10 @@ export type CatalogModel = {
   tools: boolean;
   /** Whether the model accepts image input. */
   vision: boolean;
+  /** Benchmark-grounded coding score (0-100) from the curated catalog. */
+  coding: number;
+  /** Coarse quality tier (`frontier`/`strong`/`mid`/`small`). */
+  tier: string;
 };
 
 export type OpenRouterCatalog = {
@@ -161,6 +168,32 @@ export type OpenRouterCatalog = {
   /** Non-null when the catalog couldn't be fetched (offline, no cache). */
   error: string | null;
 };
+
+/** Rules / skills / subagents, both scopes, for the customization UI. */
+export type AssetsReport = {
+  rules: Rule[];
+  skills: Skill[];
+  subagents: Subagent[];
+  /** Resolved roots so the UI can show where files live. */
+  roots: { project: string; global: string };
+};
+
+export async function buildAssetsReport(cwd: string): Promise<AssetsReport> {
+  const [rules, skills, subagents] = await Promise.all([
+    customize.loadRules(cwd),
+    customize.loadSkills(cwd),
+    customize.loadSubagents(cwd),
+  ]);
+  return {
+    rules,
+    skills,
+    subagents,
+    roots: {
+      project: customize.scopeRoot('project', cwd),
+      global: customize.scopeRoot('global', cwd),
+    },
+  };
+}
 
 const HEATMAP_DAYS = 371; // 53 weeks, aligned to whole weeks in the UI.
 
@@ -174,18 +207,30 @@ const HEATMAP_DAYS = 371; // 53 weeks, aligned to whole weeks in the UI.
 export async function buildOpenRouterCatalog(): Promise<OpenRouterCatalog> {
   try {
     const all = await agent.openrouter.fetchOpenRouterModels();
-    const models: CatalogModel[] = all
-      .map((m) => ({
-        id: m.id,
-        label: m.name ?? m.id,
-        pricePer1MIn: agent.openrouter.pricePer1MIn(m),
-        pricePer1MOut: agent.openrouter.pricePer1MOut(m),
-        contextWindow: m.context_length ?? 0,
-        tools: agent.openrouter.isToolCapable(m),
-        vision: agent.openrouter.isVisionCapable(m),
-      }))
-      .sort((a, b) => a.id.localeCompare(b.id));
-    return { models, error: null };
+    const catalogModels: CatalogModel[] = all
+      .map((m) => {
+        const card = models.resolveCard(m.id, m);
+        const coding = card.quality.coding;
+        return {
+          id: m.id,
+          label: m.name ?? m.id,
+          pricePer1MIn: agent.openrouter.pricePer1MIn(m),
+          pricePer1MOut: agent.openrouter.pricePer1MOut(m),
+          contextWindow: m.context_length ?? 0,
+          tools: agent.openrouter.isToolCapable(m),
+          vision: agent.openrouter.isVisionCapable(m),
+          coding,
+          tier: models.tierForCoding(coding),
+        };
+      })
+      // Quality-first ordering: best coding score first, then larger
+      // context, then id for stability. Mirrors how the router ranks.
+      .sort((a, b) => {
+        if (b.coding !== a.coding) return b.coding - a.coding;
+        if (b.contextWindow !== a.contextWindow) return b.contextWindow - a.contextWindow;
+        return a.id.localeCompare(b.id);
+      });
+    return { models: catalogModels, error: null };
   } catch (err) {
     return { models: [], error: err instanceof Error ? err.message : String(err) };
   }

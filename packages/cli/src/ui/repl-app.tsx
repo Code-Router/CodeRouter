@@ -76,6 +76,7 @@ const COMMANDS: CommandDef[] = [
   { name: 'plan', hint: '<prompt>', desc: 'quick planning (Cursor-style)' },
   { name: 'masterplan', hint: '<prompt>', desc: '6-phase research-grade plan' },
   { name: 'agent', hint: '<prompt>', desc: 'decisive execution' },
+  { name: 'orchestrate', hint: '<prompt>', desc: 'plan → delegate sub-tasks (big plans, cheap executes)' },
   { name: 'debug', hint: '<prompt>', desc: 'investigation + hypothesis tree' },
   { name: 'review', hint: '', desc: 'review the current diff' },
   { name: 'route', hint: '<prompt>', desc: 'classify a prompt (no execution)' },
@@ -96,7 +97,7 @@ const COMMANDS: CommandDef[] = [
   { name: 'exit', hint: '', desc: 'quit the REPL' },
 ];
 
-const MODE_COMMANDS = new Set(['plan', 'masterplan', 'agent', 'debug', 'review']);
+const MODE_COMMANDS = new Set(['plan', 'masterplan', 'agent', 'orchestrate', 'debug', 'review']);
 
 /** Best-effort cross-platform "open this URL in the default browser". */
 function openBrowser(url: string): void {
@@ -175,6 +176,10 @@ const PHASE_LABELS: Record<string, string> = {
   'masterplan/decompose': 'decomposing',
   'masterplan/critique': 'self-critique pass',
   'masterplan/refine': 'refining',
+  'orchestrate/plan': 'decomposing into sub-tasks',
+  'orchestrate/subtask': 'executing sub-task',
+  'orchestrate/validate': 'validating combined result',
+  'orchestrate/handoff': 'handing off to fix-pass',
   'debug/hypothesize': 'building hypothesis tree',
   'debug/test': 'testing hypothesis',
   'review/scan': 'scanning diff',
@@ -261,7 +266,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   const [input, setInput] = useState('');
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>(initialMode ?? 'agent');
-  const [effort, setEffort] = useState<Effort>(initialMode === 'masterplan' ? 'high' : 'medium');
+  const [effort, setEffort] = useState<Effort>(
+    initialMode === 'masterplan' || initialMode === 'orchestrate' ? 'high' : 'medium',
+  );
   // Auto-apply by default: the user almost always wants additions and
   // modifications to land in their tree without a confirmation step.
   // We still pause for explicit approval whenever the patch *deletes*
@@ -330,6 +337,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // setState commit).
   const [currentRoute, setCurrentRoute] = useState<RouteRef | null>(null);
   const currentRouteRef = useRef<RouteRef | null>(null);
+  // Last route whose rationale we surfaced, so we announce the
+  // quality-first reasoning once per distinct route (incl. handoffs).
+  const announcedRouteRef = useRef<string | null>(null);
   // Running cumulative token / cost counter. Updated on every
   // onUsage callback from the adapter; resets at the start of each
   // dispatch. Keeps the user's bill visible as it accumulates
@@ -790,6 +800,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     // displayed numbers represent THIS turn, not the session total
     // (which we track separately and show on idle).
     setRunningUsage({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
+    // Re-announce the routing rationale for this turn even if the same
+    // route ends up chosen.
+    announcedRouteRef.current = null;
     // Don't blank `currentRoute` here - the previous route is still a
     // good default for any text we render before agent/run/start
     // arrives (e.g. a quick error or the spinner row). The notifier
@@ -826,6 +839,14 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
           };
           currentRouteRef.current = next;
           setCurrentRoute(next);
+          // Surface *why* this model was picked, once per distinct
+          // route. The rationale now explains the quality-first choice
+          // (e.g. "balanced-agent: frontier coding=93, top quality").
+          const key = `${next.via ?? next.provider},${next.model}`;
+          if (next.rationale && announcedRouteRef.current !== key) {
+            announcedRouteRef.current = key;
+            pushSystem(`→ ${formatRouteLabel(next)} · ${next.rationale}`, 'info');
+          }
         }
       }
     };
@@ -1507,7 +1528,8 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     if (MODE_COMMANDS.has(cmd)) {
       const nextMode = cmd as Mode;
       setMode(nextMode);
-      if (nextMode === 'masterplan' && effort === 'medium') setEffort('high');
+      if ((nextMode === 'masterplan' || nextMode === 'orchestrate') && effort === 'medium')
+        setEffort('high');
       if (arg) await dispatch(arg, nextMode);
       else pushSystem(`  mode set to ${nextMode}`);
       return;

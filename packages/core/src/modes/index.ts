@@ -6,4 +6,5 @@ export * from './masterplan.js';
 export * from './agent.js';
 export * from './debug.js';
 export * from './review.js';
+export * from './orchestrate.js';
 export * from './dispatch.js';

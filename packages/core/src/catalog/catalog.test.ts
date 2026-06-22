@@ -111,7 +111,7 @@ describe('resolveIntent', () => {
     isolate();
     process.env.ANTHROPIC_API_KEY = 'sk-test';
     const r = resolveIntent('balanced-agent', fresh());
-    expect(r!.rationale).toMatch(/^intent:balanced-agent@rank\d+/);
+    expect(r!.rationale).toMatch(/^balanced-agent:/);
   });
 });
 
@@ -128,10 +128,10 @@ describe('codex deprioritisation under ChatGPT auth', () => {
     process.env.OPENAI_API_KEY = 'sk-test';
     const r = resolveIntent('deep-reasoning', fresh());
     expect(r).not.toBeNull();
-    // Codex's deep-reasoning rank is 1 -> penalised to 11; gpt-5 sits
-    // at rank 2 and wins.
+    // Codex is heavily quality-penalised under ChatGPT auth, so the
+    // configured OpenAI key wins with a GPT-5-class model.
     expect(r!.via).toBe('openai');
-    expect(r!.model).toBe('gpt-5');
+    expect(r!.model).toMatch(/^gpt-5/);
   });
 
   it('still uses codex for deep-reasoning when it is the only ready provider', () => {

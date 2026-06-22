@@ -62,7 +62,17 @@ describe('pick()', () => {
     envSetup();
     const ctx = { registry: new ProviderRegistry(defaultProviders()) };
     const r = pick(classification({ taskType: 'trivial' }), ctx);
-    expect(['claude-3-5-haiku-latest', 'gpt-4o-mini', 'deepseek-chat', 'qwen2.5-coder:7b', 'llama3.2']).toContain(r.model);
+    // Trivial work uses the cost objective: cheapest model that still
+    // clears the `mid` quality floor wins.
+    expect([
+      'claude-3-5-haiku-latest',
+      'gpt-4o-mini',
+      'gpt-5-mini',
+      'deepseek-chat',
+      'gemini-2.5-flash',
+      'qwen2.5-coder:7b',
+      'llama3.2',
+    ]).toContain(r.model);
   });
 
   it('routes hugeContext shape to Gemini Pro', () => {
@@ -103,9 +113,9 @@ describe('pick()', () => {
       ctx,
       { effort: 'high' },
     );
-    // GPT-5 is itself a reasoning model; the effort knob is the
-    // `reasoning_effort` request param, not a separate model name.
-    expect(r.model).toBe('gpt-5');
+    // Quality-first at a frontier floor: among ready providers the
+    // highest-coding model wins (Opus 4.5 edges the GPT-5 family).
+    expect(['claude-opus-4-5', 'gpt-5', 'gpt-5.5']).toContain(r.model);
   });
 
   it('routes multiFileTaste shape to Opus', () => {
@@ -296,7 +306,9 @@ describe('pickStrong()', () => {
     expect(top.length).toBeGreaterThanOrEqual(2);
     expect(top.length).toBeLessThanOrEqual(3);
     const models = top.map((r) => r.model);
-    expect(models).toContain('gpt-5');
+    // The diverse strong set spans frontier models across intents; a
+    // GPT-5-family model is the balanced-agent contender.
+    expect(models.some((m) => m.startsWith('gpt-5'))).toBe(true);
   });
 });
 

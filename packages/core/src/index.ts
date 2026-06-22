@@ -19,6 +19,8 @@ export * as providers from './providers/index.js';
 export * as workflows from './workflows/index.js';
 export * as catalog from './catalog/index.js';
 export * as agent from './agent/index.js';
+export * as models from './models/index.js';
+export * as customize from './customize/index.js';
 
 // Convenience top-level re-exports of the most commonly used symbols.
 // Mirrors what the CLI, MCP server, and eval harness import.
@@ -52,9 +54,32 @@ export { ProviderRegistry, defaultProviders } from './providers/index.js';
 export { whichSync } from './sandbox/which.js';
 export { resolveIntent, lookupModel, CATALOG } from './catalog/index.js';
 export type { Intent, CatalogEntry } from './catalog/index.js';
+export {
+  MODEL_CARDS,
+  findCard,
+  cardTier,
+  resolveCard,
+  selectBest,
+  selectModels,
+  tierForCoding,
+  taskFloor,
+  computeQualityBias,
+  observationsFromRuns,
+} from './models/index.js';
+export type {
+  ModelCard,
+  Modality,
+  QualityTier,
+  Candidate,
+  SelectConstraints,
+  Selection,
+  Objective,
+  ModelObservation,
+} from './models/index.js';
 export { runValidators, summarize, detectProject } from './validate/index.js';
 export { scanContext } from './context/index.js';
 export { loadProjectMemory, projectMemoryToSystemPrompt } from './memory/index.js';
+export type { Rule, Skill, Subagent, AssetScope, AssetKind } from './customize/index.js';
 export { detectClarifications } from './clarify/index.js';
 export { openStore, resolveDbPath } from './store/index.js';
 export { loadConfig } from './config/index.js';
