@@ -127,8 +127,9 @@ function Shell(): React.ReactElement {
     <div className="flex h-full">
       {sidebarOpen && (
       <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-panel">
-        <div className={cls('drag flex items-center px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
+        <div className={cls('drag flex items-center gap-2 px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
           <Logo className="h-12 w-12" />
+          <span className="text-lg font-semibold tracking-tight text-accent">CodeRouter</span>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
