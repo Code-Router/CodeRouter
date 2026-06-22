@@ -108,8 +108,29 @@ export const api = {
   // migrated dashboard data
   usage: () => req<UsageReport>('GET', '/api/usage'),
   settings: () => req<SettingsReport>('GET', '/api/settings'),
-  assets: () => req<AssetsReport>('GET', '/api/assets'),
-  plugins: () => req<PluginsReport>('GET', '/api/plugins'),
+  assets: (cwd?: string) => req<AssetsReport>('GET', `/api/assets${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  plugins: (cwd?: string) => req<PluginsReport>('GET', `/api/plugins${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+
+  // plugin install / marketplace
+  refreshPlugins: (cwd?: string) => req<PluginsReport>('POST', '/api/plugins/refresh', { cwd }),
+  installPlugin: (id: string, opts: { cwd?: string; marketplace?: string; scope: 'project' | 'global' }) =>
+    req<{ ok: boolean; installed: unknown; skipped?: string[] }>('POST', '/api/plugins/install', { id, ...opts }),
+  uninstallPlugin: (id: string, opts: { cwd?: string; scope: 'project' | 'global' }) =>
+    req<{ ok: boolean; removed: boolean }>('POST', '/api/plugins/uninstall', { id, ...opts }),
+  addMarketplace: (repo: string, name?: string) => req('POST', '/api/plugins/marketplace', { repo, name }),
+  removeMarketplace: (name: string) => req('DELETE', '/api/plugins/marketplace', { name }),
+
+  // rules / skills / subagents
+  createRule: (body: { cwd?: string; scope: 'project' | 'global'; id: string; description?: string; globs?: string[]; alwaysApply?: boolean; body: string }) =>
+    req('POST', '/api/assets/rule', body),
+  deleteRule: (cwd: string | undefined, scope: 'project' | 'global', id: string) => req('DELETE', '/api/assets/rule', { cwd, scope, id }),
+  createSkill: (body: { cwd?: string; scope: 'project' | 'global'; name: string; description?: string; body: string }) =>
+    req('POST', '/api/assets/skill', body),
+  deleteSkill: (cwd: string | undefined, scope: 'project' | 'global', slug: string) => req('DELETE', '/api/assets/skill', { cwd, scope, slug }),
+  createSubagent: (body: { cwd?: string; scope: 'project' | 'global'; name: string; description?: string; kind?: string; provider?: string; model?: string; effort?: string; body: string }) =>
+    req('POST', '/api/assets/subagent', body),
+  deleteSubagent: (cwd: string | undefined, scope: 'project' | 'global', slug: string) => req('DELETE', '/api/assets/subagent', { cwd, scope, slug }),
+
   saveKey: (name: string, apiKey: string) => req('POST', '/api/settings/key', { name, apiKey }),
   setHost: (provider: string, enabled: boolean) => req('POST', '/api/settings/host', { provider, enabled }),
   setLimit: (monthlyUsd: number | null) => req('POST', '/api/settings/limit', { monthlyUsd }),
@@ -247,11 +268,24 @@ export type SettingsReport = {
   availableModels: AvailableModel[];
   paths: { credentials: string; db: string };
 };
-export type Asset = { name: string; scope: string; description?: string };
+export type RuleAsset = { id: string; scope: string; path: string; description: string; globs: string[]; alwaysApply: boolean; body: string };
+export type SkillAsset = { slug: string; scope: string; path: string; name: string; description: string; body: string };
+export type SubagentAsset = {
+  slug: string;
+  scope: string;
+  path: string;
+  name: string;
+  description: string;
+  kind?: string;
+  provider?: string;
+  model?: string;
+  effort?: string;
+  body: string;
+};
 export type AssetsReport = {
-  rules: Asset[];
-  skills: Asset[];
-  subagents: Asset[];
+  rules: RuleAsset[];
+  skills: SkillAsset[];
+  subagents: SubagentAsset[];
   roots: { project: string; global: string };
 };
 export type PluginItem = {

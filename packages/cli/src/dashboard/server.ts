@@ -8,6 +8,7 @@
  * have open in the same browser.
  */
 
+import { statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
@@ -134,7 +135,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse, cwd: str
   }
 
   if (method === 'GET' && path === '/api/assets') {
-    sendJson(res, 200, await buildAssetsReport(cwd));
+    sendJson(res, 200, await buildAssetsReport(projectCwd(url.searchParams.get('cwd'), cwd)));
     return;
   }
 
@@ -146,12 +147,12 @@ export async function handle(req: IncomingMessage, res: ServerResponse, cwd: str
     }
     const body = await readJson(req);
     const scope = body.scope === 'global' ? 'global' : 'project';
-    const handled = await handleAssetMutation(res, cwd, path, method, scope, body);
+    const handled = await handleAssetMutation(res, projectCwd(body.cwd, cwd), path, method, scope, body);
     if (handled) return;
   }
 
   if (method === 'GET' && path === '/api/plugins') {
-    sendJson(res, 200, await buildPluginsReport(cwd));
+    sendJson(res, 200, await buildPluginsReport(projectCwd(url.searchParams.get('cwd'), cwd)));
     return;
   }
 
@@ -174,7 +175,7 @@ export async function handle(req: IncomingMessage, res: ServerResponse, cwd: str
     }
     const body = await readJson(req);
     const scope = body.scope === 'global' ? 'global' : 'project';
-    const handled = await handlePluginMutation(res, cwd, path, method, scope, body);
+    const handled = await handlePluginMutation(res, projectCwd(body.cwd, cwd), path, method, scope, body);
     if (handled) return;
   }
 
@@ -235,6 +236,23 @@ export async function handle(req: IncomingMessage, res: ServerResponse, cwd: str
   }
 
   sendJson(res, 404, { error: 'not found' });
+}
+
+/**
+ * Resolve the project directory for an asset/plugin operation. The desktop
+ * app passes the user's selected project; fall back to the daemon's own cwd
+ * when it's missing or not an existing directory (e.g. global-scope ops).
+ */
+function projectCwd(candidate: unknown, fallback: string): string {
+  if (typeof candidate === 'string' && candidate.trim()) {
+    const c = candidate.trim();
+    try {
+      if (statSync(c).isDirectory()) return c;
+    } catch {
+      /* not a real dir; fall through */
+    }
+  }
+  return fallback;
 }
 
 /** Look up a provider by name across cloud + web-search credential lists. */

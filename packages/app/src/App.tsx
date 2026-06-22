@@ -2,8 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Blocks,
   ChevronRight,
+  Folder,
+  FolderOpen,
   LayoutDashboard,
   type LucideIcon,
+  PanelLeft,
   RefreshCw,
   Settings as SettingsIcon,
   SquarePen,
@@ -45,6 +48,7 @@ function Shell(): React.ReactElement {
   const [chatId, setChatId] = useState<string | null>(null);
   const [chatsKey, setChatsKey] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const connected = useDaemonConnected();
   const mac = isMac();
 
@@ -102,6 +106,7 @@ function Shell(): React.ReactElement {
 
   return (
     <div className="flex h-full">
+      {sidebarOpen && (
       <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-panel">
         <div className={cls('drag flex items-center px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
           <Logo className="h-8 w-8" />
@@ -137,12 +142,16 @@ function Shell(): React.ReactElement {
                   onClick={() => toggleProject(p.cwd)}
                   title={p.cwd}
                   className={cls(
-                    'no-drag flex w-full items-center gap-1 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors',
+                    'no-drag flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-panel2',
                     project === p.cwd ? 'text-text' : 'text-muted hover:text-text',
-                    'hover:bg-panel2',
                   )}
                 >
-                  <ChevronRight className={cls('h-3.5 w-3.5 shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={2.5} />
+                  <ChevronRight className={cls('h-3 w-3 shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={2.5} />
+                  {open ? (
+                    <FolderOpen className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
+                  ) : (
+                    <Folder className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
+                  )}
                   <span className="truncate">{p.name}</span>
                   {pChats.length > 0 && <span className="ml-auto pl-1 text-[10px] text-muted/70">{pChats.length}</span>}
                 </button>
@@ -183,11 +192,27 @@ function Shell(): React.ReactElement {
           </button>
         </div>
       </aside>
+      )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className={cls('drag flex items-center justify-between border-b border-border px-5 pb-3', titleBar)}>
+        <header
+          className={cls(
+            'drag flex items-center gap-2 border-b border-border pb-3 pr-5',
+            titleBar,
+            !sidebarOpen && mac ? 'pl-[80px]' : 'pl-4',
+          )}
+        >
+          <button
+            onClick={() => setSidebarOpen((o) => !o)}
+            className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-panel2 hover:text-text"
+            title={sidebarOpen ? 'Collapse sidebar' : 'Open sidebar'}
+          >
+            <PanelLeft className="h-[17px] w-[17px]" strokeWidth={2} />
+          </button>
           <h1 className="text-sm font-semibold">{nav === 'chat' ? 'Chat' : TOP_NAV.find((n) => n.id === nav)?.label ?? 'Settings'}</h1>
-          {(nav === 'loops' || nav === 'chat') && activeName && <span className="no-drag truncate text-xs text-muted">{activeName}</span>}
+          {(nav === 'loops' || nav === 'chat') && activeName && (
+            <span className="no-drag ml-auto truncate text-xs text-muted">{activeName}</span>
+          )}
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {nav === 'overview' && <OverviewArea />}
@@ -205,7 +230,7 @@ function Shell(): React.ReactElement {
             />
           )}
           {nav === 'loops' && <LoopsPage projects={projects} project={project} />}
-          {nav === 'plugins' && <PluginsPage />}
+          {nav === 'plugins' && <PluginsPage project={project} />}
           {nav === 'settings' && <SettingsArea />}
         </div>
       </main>

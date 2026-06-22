@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Check, Copy, Square } from 'lucide-react';
+import { ArrowUp, Check, Copy, ListTodo, Mic, Paperclip, Plus, Square, Target } from 'lucide-react';
 import { api, sendChat, type ProjectSummary } from '../lib/api';
 import { Spinner, cls, money } from '../components/common';
 import { Markdown } from '../components/Markdown';
@@ -247,17 +247,70 @@ function Composer({
   onProjectChange: (cwd: string) => void;
   placeholder: string;
 }): React.ReactElement {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const { supported: voiceSupported, listening, toggle: toggleVoice } = useVoiceInput((t) =>
+    setInput(input ? `${input} ${t}` : t),
+  );
+
+  const append = (text: string): void => setInput(input ? `${input}${text}` : text);
+
   return (
     <div className="rounded-2xl border border-border bg-panel shadow-sm transition-colors focus-within:border-accent/60">
       <textarea
-        className="max-h-52 min-h-[52px] w-full resize-none bg-transparent px-4 pt-3 text-sm outline-none placeholder:text-muted"
+        className="max-h-60 min-h-[72px] w-full resize-none bg-transparent px-4 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-muted"
         placeholder={placeholder}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKeyDown}
-        rows={2}
+        rows={3}
       />
-      <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
+      <div className="flex items-center gap-2 px-3 pb-3 pt-1">
+        <div className="relative">
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-muted transition-colors hover:text-text"
+            title="Add"
+          >
+            <Plus className={cls('h-4 w-4 transition-transform', menuOpen && 'rotate-45')} />
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+              <div className="absolute bottom-10 left-0 z-20 w-60 overflow-hidden rounded-xl border border-border bg-panel py-1 shadow-lg">
+                <MenuItem
+                  icon={Paperclip}
+                  label="Attach file or folder"
+                  hint="Reference a path with @"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    const p = window.prompt('Path to attach (added as @path):');
+                    if (p && p.trim()) append(`${input && !input.endsWith(' ') ? ' ' : ''}@${p.trim()} `);
+                  }}
+                />
+                <MenuItem
+                  icon={Target}
+                  label="Add a goal"
+                  hint="Prefix the prompt with a goal"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    if (!input.toLowerCase().startsWith('goal:')) setInput(`Goal: ${input}`);
+                  }}
+                />
+                <MenuItem
+                  icon={ListTodo}
+                  label={mode === 'plan' ? 'Plan mode: on' : 'Turn on plan mode'}
+                  hint="Plan before editing"
+                  active={mode === 'plan'}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setMode(mode === 'plan' ? 'agent' : 'plan');
+                  }}
+                />
+              </div>
+            </>
+          )}
+        </div>
+
         <Pill value={project ?? ''} onChange={onProjectChange}>
           {projects.length === 0 && <option value="">no projects</option>}
           {projects.map((p) => (
@@ -280,7 +333,20 @@ function Composer({
             </option>
           ))}
         </Pill>
-        <div className="ml-auto">
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {voiceSupported && (
+            <button
+              onClick={toggleVoice}
+              className={cls(
+                'flex h-8 w-8 items-center justify-center rounded-full border transition-colors',
+                listening ? 'border-bad bg-bad/10 text-bad' : 'border-border text-muted hover:text-text',
+              )}
+              title={listening ? 'Stop dictation' : 'Dictate'}
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+          )}
           {busy ? (
             <button onClick={onStop} className="flex h-8 w-8 items-center justify-center rounded-full bg-panel2 text-text hover:bg-border" title="Stop">
               <Square className="h-3.5 w-3.5" />
@@ -302,6 +368,68 @@ function Composer({
       </div>
     </div>
   );
+}
+
+function MenuItem({
+  icon: Icon,
+  label,
+  hint,
+  active,
+  onClick,
+}: {
+  icon: typeof Plus;
+  label: string;
+  hint?: string;
+  active?: boolean;
+  onClick: () => void;
+}): React.ReactElement {
+  return (
+    <button onClick={onClick} className="flex w-full items-start gap-2.5 px-3 py-2 text-left text-sm hover:bg-panel2">
+      <Icon className={cls('mt-0.5 h-4 w-4 shrink-0', active ? 'text-accent' : 'text-muted')} />
+      <span>
+        <span className={cls('block', active && 'text-accent')}>{label}</span>
+        {hint && <span className="block text-xs text-muted">{hint}</span>}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Browser SpeechRecognition wrapper for dictation. Returns supported=false
+ * when the API is unavailable so the mic button can hide itself.
+ */
+function useVoiceInput(onText: (t: string) => void): { supported: boolean; listening: boolean; toggle: () => void } {
+  const recognitionRef = useRef<any>(null);
+  const [listening, setListening] = useState(false);
+  const Ctor: any =
+    typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : undefined;
+  const supported = Boolean(Ctor);
+
+  const toggle = (): void => {
+    if (!supported) return;
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const rec = new Ctor();
+    rec.lang = navigator.language || 'en-US';
+    rec.interimResults = false;
+    rec.continuous = false;
+    rec.onresult = (e: any) => {
+      const t = Array.from(e.results)
+        .map((r: any) => r[0]?.transcript ?? '')
+        .join(' ')
+        .trim();
+      if (t) onText(t);
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
+  };
+
+  return { supported, listening, toggle };
 }
 
 function Pill({

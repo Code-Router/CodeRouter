@@ -3,20 +3,23 @@ import { Tabs } from '../components/common';
 import { MarketplacePage } from './Marketplace';
 import { AssetsPage } from './Assets';
 
-/** Plugins hub: the Marketplace and the installed Rules & Skills assets. */
-export function PluginsPage(): React.ReactElement {
-  const [tab, setTab] = useState('marketplace');
+/** Plugins hub: your installed plugins, the marketplace, and customization assets. */
+export function PluginsPage({ project }: { project: string | null }): React.ReactElement {
+  const [tab, setTab] = useState('installed');
   return (
     <div>
       <Tabs
         tabs={[
+          { id: 'installed', label: 'Plugins' },
           { id: 'marketplace', label: 'Marketplace' },
           { id: 'assets', label: 'Rules & Skills' },
         ]}
         active={tab}
         onChange={setTab}
       />
-      {tab === 'marketplace' ? <MarketplacePage /> : <AssetsPage />}
+      {tab === 'installed' && <MarketplacePage project={project} installedOnly onBrowse={() => setTab('marketplace')} />}
+      {tab === 'marketplace' && <MarketplacePage project={project} />}
+      {tab === 'assets' && <AssetsPage project={project} />}
     </div>
   );
 }
