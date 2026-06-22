@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Plus, SquareTerminal, X } from 'lucide-react';
 import { execCommand } from '../lib/api';
 import { cls } from './common';
 
@@ -10,7 +11,7 @@ type Line = { kind: 'cmd' | 'out' | 'err' | 'info'; text: string };
  * so we track `cwd` here and resolve `cd` with a `pwd` round-trip. Covers
  * git/npm/test/ls workflows; interactive TUIs (vim, etc.) aren't supported.
  */
-export function Terminal({ project }: { project: string | null }): React.ReactElement {
+export function Terminal({ project, onClose }: { project: string | null; onClose?: () => void }): React.ReactElement {
   const [cwd, setCwd] = useState<string>(project ?? '');
   const [lines, setLines] = useState<Line[]>([]);
   const [input, setInput] = useState('');
@@ -33,7 +34,7 @@ export function Terminal({ project }: { project: string | null }): React.ReactEl
     setHistory((h) => [...h, command]);
     setHistIdx(null);
     setInput('');
-    push({ kind: 'cmd', text: `${shortCwd(cwd)} $ ${command}` });
+    push({ kind: 'cmd', text: `${shortCwd(cwd)} % ${command}` });
 
     if (command === 'clear') {
       setLines([]);
@@ -102,15 +103,49 @@ export function Terminal({ project }: { project: string | null }): React.ReactEl
     }
   };
 
+  const name = shortCwd(cwd || project || '~');
+
   return (
-    <div className="flex h-full flex-col bg-bg font-mono text-xs" onClick={() => inputRef.current?.focus()}>
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2">
-        {lines.length === 0 && (
-          <div className="text-muted">
-            Terminal — running in <span className="text-text">{shortCwd(cwd || project || '~')}</span>. Try{' '}
-            <span className="text-accent">git status</span>.
-          </div>
+    <div className="flex h-full flex-col bg-bg">
+      {/* Tab bar (Codex-style) */}
+      <div className="flex items-center gap-1 border-b border-border bg-panel px-2 pt-1.5">
+        <div className="flex items-center gap-1.5 rounded-t-md border border-b-0 border-border bg-bg px-2.5 py-1 text-xs text-text">
+          <SquareTerminal className="h-3.5 w-3.5 text-muted" strokeWidth={2} />
+          <span className="max-w-[180px] truncate">{name}</span>
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Close terminal"
+              className="ml-1 flex h-4 w-4 items-center justify-center rounded text-muted hover:bg-panel2 hover:text-text"
+            >
+              <X className="h-3 w-3" strokeWidth={2.5} />
+            </button>
+          )}
+        </div>
+        <button
+          onClick={() => setLines([])}
+          title="New terminal"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-panel2 hover:text-text"
+        >
+          <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+        </button>
+        {onClose && (
+          <button
+            onClick={onClose}
+            title="Hide panel"
+            className="ml-auto flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-panel2 hover:text-text"
+          >
+            <X className="h-4 w-4" strokeWidth={2} />
+          </button>
         )}
+      </div>
+
+      {/* Output + inline prompt */}
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2 font-mono text-xs leading-relaxed"
+        onClick={() => inputRef.current?.focus()}
+      >
         {lines.map((l, i) => (
           <div
             key={i}
@@ -125,20 +160,20 @@ export function Terminal({ project }: { project: string | null }): React.ReactEl
             {l.text}
           </div>
         ))}
-      </div>
-      <div className="flex items-center gap-2 border-t border-border px-3 py-1.5">
-        <span className="shrink-0 text-accent">{shortCwd(cwd || project || '~')} $</span>
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={busy}
-          spellCheck={false}
-          autoComplete="off"
-          className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted disabled:opacity-60"
-          placeholder={busy ? 'running…' : 'type a command'}
-        />
+        <div className="flex items-center gap-1.5">
+          <span className="shrink-0 text-accent">{name} %</span>
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            disabled={busy}
+            spellCheck={false}
+            autoComplete="off"
+            className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted/60 disabled:opacity-60"
+            placeholder={busy ? 'running…' : ''}
+          />
+        </div>
       </div>
     </div>
   );

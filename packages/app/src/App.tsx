@@ -48,6 +48,7 @@ export function App(): React.ReactElement {
 
 function Shell(): React.ReactElement {
   const [nav, setNav] = useState<Nav>('overview');
+  const [prevNav, setPrevNav] = useState<Nav>('overview');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [project, setProject] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatSummary[]>([]);
@@ -273,7 +274,14 @@ function Shell(): React.ReactElement {
         </nav>
 
         <div className="px-2 pb-2">
-          <SidebarSettings active={nav === 'settings'} connected={connected} onOpenSettings={() => setNav('settings')} />
+          <SidebarSettings
+            active={nav === 'settings'}
+            connected={connected}
+            onOpenSettings={() => {
+              setPrevNav((p) => (nav === 'settings' ? p : nav));
+              setNav('settings');
+            }}
+          />
         </div>
       </aside>
       )}
@@ -324,7 +332,7 @@ function Shell(): React.ReactElement {
             )}
             {nav === 'loops' && <LoopsPage projects={allProjects} project={project} />}
             {nav === 'plugins' && <PluginsPage project={project} />}
-            {nav === 'settings' && <SettingsArea />}
+            {nav === 'settings' && <SettingsArea onBack={() => setNav(prevNav)} />}
           </div>
           {sidePanelOpen && (
             <aside className="w-96 shrink-0 border-l border-border bg-panel">
@@ -334,7 +342,7 @@ function Shell(): React.ReactElement {
         </div>
         {bottomPanelOpen && (
           <div className="h-64 shrink-0 border-t border-border">
-            <Terminal project={project} />
+            <Terminal project={project} onClose={() => setBottomPanelOpen(false)} />
           </div>
         )}
       </main>
