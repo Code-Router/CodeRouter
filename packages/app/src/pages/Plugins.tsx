@@ -7,7 +7,7 @@ import { AssetsPage } from './Assets';
 export function PluginsPage({ project }: { project: string | null }): React.ReactElement {
   const [tab, setTab] = useState('installed');
   return (
-    <div>
+    <div className="mx-auto w-full max-w-4xl">
       <Tabs
         tabs={[
           { id: 'installed', label: 'Plugins' },

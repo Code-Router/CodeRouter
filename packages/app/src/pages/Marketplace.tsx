@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Download, Loader2, Store, Trash2 } from 'lucide-react';
 import { api, type PluginItem, type PluginsReport } from '../lib/api';
 import { EmptyState, Section, Spinner, cls } from '../components/common';
+import { Dropdown } from '../components/Dropdown';
 
 type Scope = 'project' | 'global';
 
@@ -69,14 +70,17 @@ export function MarketplacePage({
         {!installedOnly && (
           <>
             <input className="input max-w-xs" placeholder="Search plugins…" value={query} onChange={(e) => setQuery(e.target.value)} />
-            <select className="input max-w-[200px]" value={category} onChange={(e) => setCategory(e.target.value)}>
-              <option value="">All categories</option>
-              {data.categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+            <div className="w-[200px]">
+              <Dropdown
+                value={category}
+                onChange={setCategory}
+                searchable
+                options={[
+                  { value: '', label: 'All categories' },
+                  ...data.categories.map((c) => ({ value: c, label: c })),
+                ]}
+              />
+            </div>
           </>
         )}
         {installedOnly && (
@@ -195,7 +199,7 @@ function PluginCard({
         ) : (
           <button onClick={onInstall} disabled={busy} className="btn btn-primary w-full justify-center">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            Install ({scope})
+            Use ({scope})
           </button>
         )}
       </div>

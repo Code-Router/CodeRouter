@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { api, type AssetsReport, type RuleAsset, type SkillAsset, type SubagentAsset } from '../lib/api';
 import { Section, Spinner, cls } from '../components/common';
+import { Dropdown } from '../components/Dropdown';
 
 type Scope = 'project' | 'global';
 type AddKind = 'rule' | 'skill' | 'subagent' | null;
@@ -257,13 +258,12 @@ function SubagentForm({
           <input className="input" value={kind} onChange={(e) => setKind(e.target.value)} placeholder="frontend, tests…" />
         </Field>
         <Field label="Effort (optional)">
-          <select className="input" value={effort} onChange={(e) => setEffort(e.target.value)}>
-            {EFFORTS.map((e) => (
-              <option key={e} value={e}>
-                {e || 'default'}
-              </option>
-            ))}
-          </select>
+          <Dropdown
+            value={effort}
+            onChange={setEffort}
+            placeholder="default"
+            options={EFFORTS.map((e) => ({ value: e, label: e || 'default' }))}
+          />
         </Field>
         <Field label="Provider (optional)">
           <input className="input" value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="openrouter" />

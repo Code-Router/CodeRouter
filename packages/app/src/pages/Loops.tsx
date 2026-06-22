@@ -4,6 +4,7 @@ import type { LoopIteration, LoopRecord, LoopSpec, LoopValidation } from '@coder
 import { api, type PresetInfo, type ProjectSummary } from '../lib/api';
 import { useLoopEvents } from '../lib/events';
 import { EmptyState, Section, Spinner, StatusBadge, cls, money, timeAgo } from '../components/common';
+import { Dropdown } from '../components/Dropdown';
 
 type View = { kind: 'list' } | { kind: 'new' } | { kind: 'detail'; cwd: string; id: string };
 
@@ -152,14 +153,18 @@ function NewLoop({
 
       <Section title="What do you want done?">
         <div className="card space-y-3">
-          <select className="input" value={cwd} onChange={(e) => setCwd(e.target.value)}>
-            {projects.length === 0 && <option value="">no projects — run CodeRouter in a repo first</option>}
-            {projects.map((p) => (
-              <option key={p.cwd} value={p.cwd}>
-                {p.name} — {p.cwd}
-              </option>
-            ))}
-          </select>
+          <Dropdown
+            value={cwd}
+            onChange={setCwd}
+            searchable
+            placeholder="no projects — run CodeRouter in a repo first"
+            options={projects.map((p) => ({
+              value: p.cwd,
+              label: p.name,
+              meta: p.cwd,
+              searchText: `${p.name} ${p.cwd}`,
+            }))}
+          />
           <textarea
             className="input min-h-[90px] resize-y"
             placeholder="e.g. Fix the failing auth tests and keep changes minimal."

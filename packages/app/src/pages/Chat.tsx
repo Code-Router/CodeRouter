@@ -4,6 +4,7 @@ import { api, sendChat, type ProjectSummary } from '../lib/api';
 import { Spinner, cls, money } from '../components/common';
 import { Markdown } from '../components/Markdown';
 import { DiffView } from '../components/DiffView';
+import { Dropdown } from '../components/Dropdown';
 
 export type ChatChanges = { diff: string | null; filesChanged: string[] };
 
@@ -344,28 +345,14 @@ function Composer({
           )}
         </div>
 
-        <Pill value={project ?? ''} onChange={onProjectChange}>
-          {projects.length === 0 && <option value="">no projects</option>}
-          {projects.map((p) => (
-            <option key={p.cwd} value={p.cwd}>
-              {p.name}
-            </option>
-          ))}
-        </Pill>
-        <Pill value={mode} onChange={setMode}>
-          {MODES.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </Pill>
-        <Pill value={effort} onChange={setEffort} className="capitalize">
-          {EFFORTS.map((e) => (
-            <option key={e} value={e}>
-              {e}
-            </option>
-          ))}
-        </Pill>
+        <Pill
+          value={project ?? ''}
+          onChange={onProjectChange}
+          placeholder="no projects"
+          options={projects.map((p) => ({ value: p.cwd, label: p.name }))}
+        />
+        <Pill value={mode} onChange={setMode} options={MODES.map((m) => ({ value: m, label: m }))} />
+        <Pill value={effort} onChange={setEffort} capitalize options={EFFORTS.map((e) => ({ value: e, label: e }))} />
 
         <div className="ml-auto flex items-center gap-1.5">
           {voiceSupported && (
@@ -468,24 +455,28 @@ function useVoiceInput(onText: (t: string) => void): { supported: boolean; liste
 function Pill({
   value,
   onChange,
-  children,
-  className,
+  options,
+  placeholder,
+  capitalize,
 }: {
   value: string;
   onChange: (v: string) => void;
-  children: React.ReactNode;
-  className?: string;
+  options: Array<{ value: string; label: string }>;
+  placeholder?: string;
+  capitalize?: boolean;
 }): React.ReactElement {
   return (
-    <select
-      className={cls(
-        'rounded-md border border-border bg-panel2 px-2 py-1 text-xs text-muted outline-none transition-colors hover:text-text',
-        className,
-      )}
+    <Dropdown
       value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      {children}
-    </select>
+      onChange={onChange}
+      placeholder={placeholder}
+      options={options.map((o) => ({ value: o.value, label: o.label }))}
+      size="sm"
+      menuWidth="w-56"
+      className={cls(
+        'flex items-center justify-between gap-1.5 rounded-md border border-border bg-panel2 px-2 py-1 text-xs text-muted outline-none transition-colors hover:border-accent hover:text-text',
+        capitalize && 'capitalize',
+      )}
+    />
   );
 }

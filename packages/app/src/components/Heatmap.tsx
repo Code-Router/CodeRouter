@@ -1,10 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { HeatmapDay } from '../lib/api';
 import { cls } from './common';
 
-/** GitHub-style contribution grid with native-title tooltips. */
+type Hover = { day: HeatmapDay; x: number; y: number };
+
+/** GitHub-style contribution grid with a floating hover tooltip. */
 export function Heatmap({ days }: { days: HeatmapDay[] }): React.ReactElement {
+  const [hover, setHover] = useState<Hover | null>(null);
+
   if (!days || days.length === 0) return <div className="text-sm text-muted">No activity yet.</div>;
+
   const max = Math.max(1, ...days.map((d) => d.runs));
   const level = (runs: number): number => {
     if (runs === 0) return 0;
@@ -14,25 +19,60 @@ export function Heatmap({ days }: { days: HeatmapDay[] }): React.ReactElement {
     if (r > 0.1) return 2;
     return 1;
   };
-  const colors = ['bg-panel2', 'bg-accent/30', 'bg-accent/50', 'bg-accent/70', 'bg-accent'];
+  const colors = ['bg-panel2', 'bg-accent/30', 'bg-accent/50', 'bg-accent/75', 'bg-accent'];
 
-  // Group into weeks (columns of 7). Assume `days` is chronological.
   const weeks: HeatmapDay[][] = [];
   for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
 
+  const move = (e: React.MouseEvent, d: HeatmapDay): void => {
+    setHover({ day: d, x: e.clientX, y: e.clientY });
+  };
+
   return (
-    <div className="flex gap-[3px] overflow-x-auto">
-      {weeks.map((w, wi) => (
-        <div key={wi} className="flex flex-col gap-[3px]">
-          {w.map((d) => (
-            <div
-              key={d.date}
-              title={`${d.date}: ${d.runs} run${d.runs === 1 ? '' : 's'}`}
-              className={cls('h-[11px] w-[11px] rounded-[2px]', colors[level(d.runs)])}
-            />
-          ))}
+    <div className="relative">
+      <div className="flex gap-[3px] overflow-x-auto">
+        {weeks.map((w, wi) => (
+          <div key={wi} className="flex flex-col gap-[3px]">
+            {w.map((d) => (
+              <div
+                key={d.date}
+                onMouseEnter={(e) => move(e, d)}
+                onMouseMove={(e) => move(e, d)}
+                onMouseLeave={() => setHover(null)}
+                className={cls(
+                  'h-[12px] w-[12px] rounded-[2px] ring-offset-0 transition-colors hover:ring-1 hover:ring-accent',
+                  colors[level(d.runs)],
+                )}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {hover && (
+        <div
+          className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full rounded-lg border border-border bg-panel px-2.5 py-1.5 text-xs shadow-xl shadow-black/50"
+          style={{ left: hover.x, top: hover.y - 8 }}
+        >
+          <div className="font-medium text-text">{formatDate(hover.day.date)}</div>
+          <div className="text-muted">
+            {hover.day.runs} run{hover.day.runs === 1 ? '' : 's'}
+            {hover.day.tokens ? ` · ${fmtTokens(hover.day.tokens)} tok` : ''}
+          </div>
         </div>
-      ))}
+      )}
     </div>
   );
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
 }

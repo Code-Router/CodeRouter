@@ -7,7 +7,7 @@ import { UsagePage } from './Usage';
 export function OverviewArea(): React.ReactElement {
   const [tab, setTab] = useState('overview');
   return (
-    <div>
+    <div className="mx-auto w-full max-w-4xl">
       <Tabs
         tabs={[
           { id: 'overview', label: 'Overview' },

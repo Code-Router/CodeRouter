@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { api, type SettingsReport } from '../lib/api';
 import { Section, Spinner, cls } from '../components/common';
 import { useTheme, type ThemePref } from '../lib/theme';
@@ -27,6 +28,16 @@ export function SettingsPage(): React.ReactElement {
     }
   };
 
+  const removeKey = async (name: string): Promise<void> => {
+    setBusy(name);
+    try {
+      await api.removeKey(name);
+      refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const toggleHost = async (provider: string, enabled: boolean): Promise<void> => {
     setBusy(provider);
     try {
@@ -38,7 +49,7 @@ export function SettingsPage(): React.ReactElement {
   };
 
   return (
-    <div className="max-w-3xl">
+    <div>
       <Section title="Appearance">
         <Appearance />
       </Section>
@@ -52,7 +63,22 @@ export function SettingsPage(): React.ReactElement {
                 <div className="text-xs text-muted">{p.envVar}</div>
               </div>
               {p.configured ? (
-                <span className="chip border-ok text-ok">configured{p.source ? ` · ${p.source}` : ''}</span>
+                <div className="flex flex-1 items-center gap-2">
+                  <span className="chip border-ok text-ok">configured{p.source ? ` · ${p.source}` : ''}</span>
+                  {p.source === 'env' ? (
+                    <span className="ml-auto text-xs text-muted">set via environment variable</span>
+                  ) : (
+                    <button
+                      className="btn btn-danger ml-auto"
+                      disabled={busy === p.name}
+                      onClick={() => void removeKey(p.name)}
+                      title="Remove this key so you can replace it"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Remove
+                    </button>
+                  )}
+                </div>
               ) : (
                 <>
                   <input

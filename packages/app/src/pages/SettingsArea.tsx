@@ -7,7 +7,7 @@ import { ModelsPage } from './Models';
 export function SettingsArea(): React.ReactElement {
   const [tab, setTab] = useState('general');
   return (
-    <div>
+    <div className="mx-auto w-full max-w-3xl">
       <Tabs
         tabs={[
           { id: 'general', label: 'General' },

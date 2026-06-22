@@ -108,6 +108,7 @@ export const api = {
   // migrated dashboard data
   usage: () => req<UsageReport>('GET', '/api/usage'),
   settings: () => req<SettingsReport>('GET', '/api/settings'),
+  openrouterModels: () => req<OpenRouterCatalog>('GET', '/api/openrouter-models'),
   assets: (cwd?: string) => req<AssetsReport>('GET', `/api/assets${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
   plugins: (cwd?: string) => req<PluginsReport>('GET', `/api/plugins${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
 
@@ -132,6 +133,7 @@ export const api = {
   deleteSubagent: (cwd: string | undefined, scope: 'project' | 'global', slug: string) => req('DELETE', '/api/assets/subagent', { cwd, scope, slug }),
 
   saveKey: (name: string, apiKey: string) => req('POST', '/api/settings/key', { name, apiKey }),
+  removeKey: (name: string) => req<{ ok: boolean; removed?: boolean }>('DELETE', '/api/settings/key', { name }),
   setHost: (provider: string, enabled: boolean) => req('POST', '/api/settings/host', { provider, enabled }),
   setLimit: (monthlyUsd: number | null) => req('POST', '/api/settings/limit', { monthlyUsd }),
   setPreferred: (tier: string, provider: string | null, model: string | null) =>
@@ -306,6 +308,18 @@ export type UsageReport = {
   highlights: { mostActiveMonth: string | null; mostActiveDay: string | null; longestStreakDays: number; currentStreakDays: number };
   recentRuns: RecentRun[];
 };
+export type CatalogModel = {
+  id: string;
+  label: string;
+  pricePer1MIn: number;
+  pricePer1MOut: number;
+  contextWindow: number;
+  tools: boolean;
+  vision: boolean;
+  coding: number;
+  tier: string;
+};
+export type OpenRouterCatalog = { models: CatalogModel[]; error: string | null };
 export type ProviderSetting = { name: string; label: string; envVar: string; configured: boolean; source?: string };
 export type HostSetting = { provider: string; label: string; cli: string; binPath: string; blurb: string; enabled: boolean };
 export type AvailableModel = { provider: string; model: string; label: string; tiers: string[] };
