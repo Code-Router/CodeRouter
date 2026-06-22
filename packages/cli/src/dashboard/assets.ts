@@ -27,6 +27,7 @@ const STYLES = /* css */ `
   --hm-2: #006d32;
   --hm-3: #26a641;
   --hm-4: #39d353;
+  --hm-size: 13px;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -98,14 +99,33 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; }
 .heatmap-top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
 .heatmap-top .big { font-size: 28px; font-weight: 700; letter-spacing: -.5px; }
 .heatmap-scroll { overflow-x: auto; padding-bottom: 4px; }
-.heatmap { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 13px); gap: 1px; }
-.hm-cell { width: 13px; height: 13px; border-radius: 2px; background: var(--hm-0); }
+.heatmap-cal { display: inline-flex; flex-direction: column; gap: 5px; min-width: min-content; }
+.hm-months { display: grid; gap: 1px; margin-left: 30px; height: 13px; color: var(--muted); font-size: 11px; }
+.hm-month { line-height: 13px; white-space: nowrap; overflow: visible; }
+.hm-body { display: flex; gap: 6px; }
+.hm-weekdays { display: grid; grid-template-rows: repeat(7, var(--hm-size)); gap: 1px; width: 24px; color: var(--muted); font-size: 10px; }
+.hm-weekdays span { line-height: var(--hm-size); height: var(--hm-size); }
+.heatmap { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, var(--hm-size)); gap: 1px; }
+.hm-cell { width: var(--hm-size); height: var(--hm-size); border-radius: 2px; background: var(--hm-0); }
+.hm-cell[data-date] { cursor: pointer; }
+.hm-cell[data-date]:hover { outline: 1px solid var(--text); outline-offset: -1px; }
+.hm-cell.hm-pad { background: transparent; }
 .hm-cell[data-l="1"] { background: var(--hm-1); }
 .hm-cell[data-l="2"] { background: var(--hm-2); }
 .hm-cell[data-l="3"] { background: var(--hm-3); }
 .hm-cell[data-l="4"] { background: var(--hm-4); }
 .hm-legend { display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-top: 12px; color: var(--muted); font-size: 11px; }
 .hm-legend .hm-cell { width: 11px; height: 11px; }
+.hm-tip {
+  position: fixed; z-index: 1000; pointer-events: none; opacity: 0;
+  transform: translate(-50%, -100%); transition: opacity .08s ease;
+  background: #0b0f14; border: 1px solid var(--border-strong);
+  border-radius: 6px; padding: 7px 10px; font-size: 12px; line-height: 1.4;
+  color: var(--text); box-shadow: 0 6px 20px rgba(0,0,0,.45); white-space: nowrap;
+}
+.hm-tip.show { opacity: 1; }
+.hm-tip .hm-tip-date { color: var(--muted); font-size: 11px; margin-bottom: 1px; }
+.hm-tip .hm-tip-empty { color: var(--muted); }
 
 /* Highlights row */
 .highlights { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
@@ -379,12 +399,80 @@ function heatLevel(runs, max) {
   return 1;
 }
 
+const HM_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// GitHub-style contribution calendar: weeks are columns, weekdays are rows
+// (Sunday on top). Leading blanks pad the first partial week so every cell
+// lands on its true weekday. Cells carry data-* used by the hover tooltip.
 function renderHeatmap(days) {
+  if (!days || !days.length) return '<div class="heatmap-scroll"></div>';
   const max = days.reduce((m, d) => Math.max(m, d.runs), 0);
-  const cells = days.map((d) =>
-    '<div class="hm-cell" data-l="' + heatLevel(d.runs, max) + '" title="' + esc(d.date) + ': ' + d.runs + ' run' + (d.runs === 1 ? '' : 's') + ', ' + fmtNum(d.tokens) + ' tokens"></div>'
-  ).join('');
-  return '<div class="heatmap-scroll"><div class="heatmap">' + cells + '</div></div>';
+  const first = new Date(days[0].date + 'T00:00:00');
+  const lead = first.getDay();
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<div class="hm-cell hm-pad"></div>');
+  for (const d of days) {
+    cells.push(
+      '<div class="hm-cell" data-l="' + heatLevel(d.runs, max) +
+      '" data-date="' + esc(d.date) + '" data-runs="' + d.runs + '" data-tokens="' + d.tokens + '"></div>'
+    );
+  }
+  const totalCols = Math.ceil((lead + days.length) / 7);
+  const months = [];
+  let prev = -1;
+  for (let c = 0; c < totalCols; c++) {
+    const probe = Math.max(0, c * 7 - lead);
+    let label = '';
+    if (probe < days.length) {
+      const m = new Date(days[probe].date + 'T00:00:00').getMonth();
+      if (m !== prev) { if (c < totalCols - 1) label = HM_MONTHS[m]; prev = m; }
+    }
+    months.push('<div class="hm-month">' + label + '</div>');
+  }
+  const cols = 'repeat(' + totalCols + ',var(--hm-size))';
+  return (
+    '<div class="heatmap-scroll"><div class="heatmap-cal">' +
+      '<div class="hm-months" style="grid-template-columns:' + cols + '">' + months.join('') + '</div>' +
+      '<div class="hm-body">' +
+        '<div class="hm-weekdays"><span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span></div>' +
+        '<div class="heatmap" style="grid-template-columns:' + cols + '">' + cells.join('') + '</div>' +
+      '</div>' +
+    '</div></div>'
+  );
+}
+
+// Single floating tooltip shared by all heatmap cells, wired once via event
+// delegation so it survives section re-renders.
+function initHeatmapTooltip() {
+  if (window.__hmTipReady) return;
+  window.__hmTipReady = true;
+  const tip = el('<div class="hm-tip"></div>');
+  document.body.appendChild(tip);
+  const position = (e) => {
+    tip.style.left = e.clientX + 'px';
+    tip.style.top = (e.clientY - 10) + 'px';
+  };
+  document.addEventListener('mouseover', (e) => {
+    const cell = e.target.closest && e.target.closest('.hm-cell[data-date]');
+    if (!cell) return;
+    const runs = Number(cell.dataset.runs || 0);
+    const tokens = Number(cell.dataset.tokens || 0);
+    const dt = new Date(cell.dataset.date + 'T00:00:00');
+    const dateStr = dt.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    const body = runs
+      ? '<strong>' + fmtFull(runs) + ' run' + (runs === 1 ? '' : 's') + '</strong> · ' + fmtNum(tokens) + ' tokens'
+      : '<span class="hm-tip-empty">No activity</span>';
+    tip.innerHTML = '<div class="hm-tip-date">' + esc(dateStr) + '</div>' + body;
+    position(e);
+    tip.classList.add('show');
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!tip.classList.contains('show')) return;
+    if (e.target.closest && e.target.closest('.hm-cell[data-date]')) position(e);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (e.target.closest && e.target.closest('.hm-cell[data-date]')) tip.classList.remove('show');
+  });
 }
 
 function statCard(label, value, sub) {
@@ -1342,6 +1430,7 @@ async function renderCustomize() {
 }
 
 async function boot() {
+  initHeatmapTooltip();
   document.querySelectorAll('.nav-item').forEach((n) => n.addEventListener('click', () => setView(n.dataset.view)));
   try {
     await Promise.all([loadUsage(), loadSettings()]);
