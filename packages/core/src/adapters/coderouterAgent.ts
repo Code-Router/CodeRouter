@@ -19,7 +19,8 @@ import {
   runAgent,
   type Tool,
 } from '../agent/index.js';
-import type { AdapterCapabilities, ProviderId } from '../types.js';
+import { buildSystemPrompt } from '../agent/systemPrompt.js';
+import type { AdapterCapabilities, ContextManifest, ProviderId } from '../types.js';
 import { BaseAdapter } from './base.js';
 import type { AdapterCallInput, AdapterCallResult } from './types.js';
 
@@ -105,9 +106,13 @@ export class CodeRouterAgentAdapter extends BaseAdapter {
       reasoningParam: this.opts.reasoningParam,
     });
 
+    const systemPrompt = input.systemPrompt ?? buildSystemPrompt({
+      append: formatManifestForPrompt(input.contextManifest),
+    });
+
     const result = await runAgent({
       prompt: input.prompt,
-      systemPrompt: input.systemPrompt,
+      systemPrompt,
       cwd: input.cwd,
       signal: input.signal,
       tools: this.tools,
@@ -135,4 +140,27 @@ export class CodeRouterAgentAdapter extends BaseAdapter {
       durationMs: result.durationMs,
     };
   }
+}
+
+/**
+ * Turn a context manifest into a compact block the model can use to
+ * orient itself. Tells the model which files are relevant (ranked by
+ * importance) and why, so it knows what to read first.
+ */
+function formatManifestForPrompt(manifest?: ContextManifest): string | undefined {
+  if (!manifest || manifest.entries.length === 0) return undefined;
+
+  const lines = manifest.entries
+    .slice(0, 30)
+    .map((e) => `- ${e.path} (${e.reason})`)
+    .join('\n');
+
+  return [
+    `The following files are likely relevant to this task (ranked by relevance):`,
+    lines,
+    manifest.truncated
+      ? `\n(List was truncated; use grep/glob to find more files if needed.)`
+      : '',
+    `\nRead the most relevant ones before making changes.`,
+  ].join('\n');
 }
