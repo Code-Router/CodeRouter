@@ -18,7 +18,7 @@ Then run:
 coderouter
 ```
 
-That's the whole setup — a prebuilt `ripgrep` is bundled in, and first launch walks you through adding an API key or auto-detects a local Claude Code / Codex CLI.
+That's the whole setup — first launch walks you through adding an API key or auto-detects a local Claude Code / Codex CLI you already have.
 
 Prefer no global install?
 
