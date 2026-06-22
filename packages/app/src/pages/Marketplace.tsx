@@ -312,7 +312,7 @@ function PluginCard({
         ))}
         <span className="ml-auto">{p.marketplace}</span>
       </div>
-      <div className="mt-3 border-t border-border pt-3">
+      <div className="mt-3 flex justify-end border-t border-border pt-3">
         {installedScopes.length === 0 ? (
           <ScopeButton
             label="Use"
@@ -339,9 +339,9 @@ function PluginCard({
           <button
             onClick={() => onUninstall(installedScopes[0])}
             disabled={busy}
-            className="btn btn-danger w-full justify-center"
+            className="btn btn-danger px-3 py-1 text-xs"
           >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             Remove
           </button>
         ) : (
@@ -349,7 +349,7 @@ function PluginCard({
             label="Remove"
             variant="danger"
             busy={busy}
-            icon={<Trash2 className="h-4 w-4" />}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
             options={[
               { scope: 'project', label: 'Remove from this project', icon: <FolderGit2 className="h-4 w-4" /> },
               { scope: 'global', label: 'Remove everywhere', icon: <Globe className="h-4 w-4" /> },
@@ -395,13 +395,13 @@ function ScopeButton({
       <button
         onClick={() => setOpen((o) => !o)}
         disabled={busy}
-        className={cls('btn w-full justify-center', variant === 'danger' ? 'btn-danger' : 'btn-primary')}
+        className={cls('btn px-3 py-1 text-xs', variant === 'danger' ? 'btn-danger' : 'btn-primary')}
       >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : icon}
         {label}
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 overflow-hidden rounded-lg border border-border bg-panel py-1 shadow-xl shadow-black/40">
+        <div className="absolute bottom-full right-0 z-50 mb-1.5 w-56 overflow-hidden rounded-lg border border-border bg-panel py-1 shadow-xl shadow-black/40">
           {options.map((o) => (
             <button
               key={o.scope}
