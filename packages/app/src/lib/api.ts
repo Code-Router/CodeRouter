@@ -64,7 +64,7 @@ export const api = {
   projects: () => req<{ projects: ProjectSummary[] }>('GET', '/api/projects'),
   chats: (cwd?: string) => req<{ chats: ChatSummary[] }>('GET', `/api/chats${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
   chat: (cwd: string, id: string) =>
-    req<{ session: ChatSession; messages: ChatMessageRecord[] }>(
+    req<{ session: ChatSession; messages: ChatMessageDetail[] }>(
       'GET',
       `/api/chat?cwd=${encodeURIComponent(cwd)}&id=${encodeURIComponent(id)}`,
     ),
@@ -151,8 +151,21 @@ export type ChatStreamEvent =
       tokensIn: number;
       tokensOut: number;
       diff: string | null;
+      filesChanged: string[];
     }
   | { type: 'error'; error: string };
+
+/** A persisted chat message, enriched with the diff of the run that made it. */
+export type ChatMessageDetail = ChatMessageRecord & {
+  diff?: string | null;
+  filesChanged?: string[];
+  status?: string;
+};
+
+export type ExecEvent =
+  | { type: 'out'; text: string }
+  | { type: 'err'; text: string }
+  | { type: 'exit'; code: number; cwd: string };
 
 /**
  * Run one chat turn, streaming the answer. POSTs to the daemon and reads
@@ -187,6 +200,43 @@ export async function sendChat(
       if (!json) continue;
       try {
         onEvent(JSON.parse(json) as ChatStreamEvent);
+      } catch {
+        /* ignore malformed frame */
+      }
+    }
+  }
+}
+
+/** Run a shell command in a project dir, streaming stdout/stderr frames. */
+export async function execCommand(
+  body: { cwd: string; command: string },
+  onEvent: (e: ExecEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const base = await resolveBase();
+  const res = await fetch(`${base}/api/exec`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const frames = buf.split('\n\n');
+    buf = frames.pop() ?? '';
+    for (const frame of frames) {
+      const line = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) continue;
+      const json = line.slice(5).trim();
+      if (!json) continue;
+      try {
+        onEvent(JSON.parse(json) as ExecEvent);
       } catch {
         /* ignore malformed frame */
       }

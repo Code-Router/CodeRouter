@@ -1,4 +1,6 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode } from '@coderouter/core';
@@ -196,6 +198,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
     return handleChatSend(req, res, cwd);
   }
 
+  // POST /api/exec -> run a shell command in a project dir, streaming
+  // stdout/stderr back as SSE frames. Powers the Studio terminal panel.
+  if (method === 'POST' && path === '/api/exec') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handleExec(req, res, cwd);
+  }
+
   // ---- loops ------------------------------------------------------
   if (path === '/api/loops' || path.startsWith('/api/loops/')) {
     const handled = await handleLoops(req, res, cwd, method, path, url);
@@ -274,11 +283,62 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
       tokensIn: output.tokensIn,
       tokensOut: output.tokensOut,
       diff: output.diff ?? null,
+      filesChanged: output.filesChanged ?? [],
     });
   } catch (e) {
     send({ type: 'error', error: e instanceof Error ? e.message : String(e) });
   }
   res.end();
+}
+
+/**
+ * Run one shell command in a project directory and stream its output.
+ * Each command is its own short-lived `bash -lc` (or `cmd /c`) process —
+ * not a persistent PTY — so the client tracks `cwd` itself and sends it
+ * with every command. Good enough for git/npm/ls/test workflows.
+ */
+function handleExec(req: IncomingMessage, res: ServerResponse, daemonCwd: string): void {
+  void readJson(req).then((body) => {
+    const command = String(body.command ?? '').trim();
+    let cwd = String(body.cwd ?? daemonCwd);
+    if (!cwd || !existsSync(cwd) || !statSync(cwd).isDirectory()) cwd = daemonCwd;
+
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+      'access-control-allow-origin': req.headers.origin && req.headers.origin !== 'null' ? req.headers.origin : '*',
+    });
+    const send = (o: unknown): void => {
+      try {
+        res.write(`data: ${JSON.stringify(o)}\n\n`);
+      } catch {
+        /* client gone */
+      }
+    };
+
+    if (!command) {
+      send({ type: 'exit', code: 0, cwd });
+      res.end();
+      return;
+    }
+
+    const isWin = process.platform === 'win32';
+    const child = spawn(isWin ? 'cmd' : 'bash', isWin ? ['/c', command] : ['-lc', command], {
+      cwd,
+      env: process.env,
+    });
+    child.stdout.on('data', (d: Buffer) => send({ type: 'out', text: d.toString() }));
+    child.stderr.on('data', (d: Buffer) => send({ type: 'err', text: d.toString() }));
+    child.on('error', (e) => send({ type: 'err', text: `${e.message}\n` }));
+    child.on('close', (code) => {
+      send({ type: 'exit', code: code ?? 0, cwd });
+      res.end();
+    });
+    req.on('close', () => {
+      if (!child.killed) child.kill();
+    });
+  });
 }
 
 function openSse(req: IncomingMessage, res: ServerResponse): void {

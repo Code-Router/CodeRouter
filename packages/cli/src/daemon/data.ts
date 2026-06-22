@@ -5,6 +5,7 @@ import {
   openStore,
   registerProject,
   resolveDbPath,
+  type ChatMessageRecord,
   type ChatSession,
   type LoopRecord,
   type Store,
@@ -97,11 +98,27 @@ export async function buildChatsReport(cwd: string, projectCwd?: string): Promis
   return { chats };
 }
 
+/** A chat message enriched with the diff/files of the run that produced it. */
+export type ChatMessageDetail = ChatMessageRecord & {
+  diff?: string | null;
+  filesChanged?: string[];
+  status?: string;
+};
+
 export async function buildChatDetail(projectCwd: string, sessionId: string) {
   const store = await storeFor(projectCwd);
   const session = store.chats.getSession(sessionId);
   if (!session) return null;
-  return { session, messages: store.chats.messages(sessionId) };
+  const messages: ChatMessageDetail[] = store.chats.messages(sessionId).map((m) => {
+    if (m.role === 'assistant' && m.runId) {
+      const run = store.runs.get(m.runId);
+      if (run && (run.diff || run.filesChanged.length)) {
+        return { ...m, diff: run.diff, filesChanged: run.filesChanged, status: run.status };
+      }
+    }
+    return m;
+  });
+  return { session, messages };
 }
 
 /** Loops across every project (for the global Loops list). */

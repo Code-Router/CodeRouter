@@ -6,7 +6,9 @@ import {
   FolderOpen,
   LayoutDashboard,
   type LucideIcon,
+  PanelBottom,
   PanelLeft,
+  PanelRight,
   RefreshCw,
   Settings as SettingsIcon,
   SquarePen,
@@ -15,8 +17,10 @@ import { api, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
 import { LoopEventsProvider, useDaemonConnected } from './lib/events';
 import { cls } from './components/common';
 import { Logo } from './components/Logo';
+import { Terminal } from './components/Terminal';
+import { ChangesPanel } from './components/ChangesPanel';
 import { LoopsPage } from './pages/Loops';
-import { ChatPage } from './pages/Chat';
+import { ChatPage, type ChatChanges } from './pages/Chat';
 import { OverviewArea } from './pages/OverviewArea';
 import { PluginsPage } from './pages/Plugins';
 import { SettingsArea } from './pages/SettingsArea';
@@ -49,8 +53,23 @@ function Shell(): React.ReactElement {
   const [chatsKey, setChatsKey] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
+  const [changes, setChanges] = useState<ChatChanges | null>(null);
   const connected = useDaemonConnected();
   const mac = isMac();
+
+  // ⌘J / Ctrl+J toggles the bottom terminal panel, matching Codex.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        setBottomPanelOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     void api
@@ -109,7 +128,7 @@ function Shell(): React.ReactElement {
       {sidebarOpen && (
       <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-panel">
         <div className={cls('drag flex items-center px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
-          <Logo className="h-8 w-8" />
+          <Logo className="h-12 w-12" />
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
@@ -210,31 +229,73 @@ function Shell(): React.ReactElement {
             <PanelLeft className="h-[17px] w-[17px]" strokeWidth={2} />
           </button>
           <h1 className="text-sm font-semibold">{nav === 'chat' ? 'Chat' : TOP_NAV.find((n) => n.id === nav)?.label ?? 'Settings'}</h1>
-          {(nav === 'loops' || nav === 'chat') && activeName && (
-            <span className="no-drag ml-auto truncate text-xs text-muted">{activeName}</span>
-          )}
+          <div className="no-drag ml-auto flex items-center gap-1">
+            {(nav === 'loops' || nav === 'chat') && activeName && (
+              <span className="mr-1 max-w-[180px] truncate text-xs text-muted">{activeName}</span>
+            )}
+            <PanelToggle icon={PanelRight} active={sidePanelOpen} onClick={() => setSidePanelOpen((o) => !o)} title="Toggle changes panel" />
+            <PanelToggle icon={PanelBottom} active={bottomPanelOpen} onClick={() => setBottomPanelOpen((o) => !o)} title="Toggle terminal (⌘J)" />
+          </div>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {nav === 'overview' && <OverviewArea />}
-          {nav === 'chat' && (
-            <ChatPage
-              chatId={chatId}
-              project={project}
-              projects={projects}
-              onProjectChange={setProject}
-              onSessionCreated={(id) => {
-                setChatId(id);
-                setChatsKey((k) => k + 1);
-                if (project) setExpanded((e) => new Set(e).add(project));
-              }}
-            />
+        <div className="flex min-h-0 flex-1">
+          <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            {nav === 'overview' && <OverviewArea />}
+            {nav === 'chat' && (
+              <ChatPage
+                chatId={chatId}
+                project={project}
+                projects={projects}
+                onProjectChange={setProject}
+                onChanges={setChanges}
+                onSessionCreated={(id) => {
+                  setChatId(id);
+                  setChatsKey((k) => k + 1);
+                  if (project) setExpanded((e) => new Set(e).add(project));
+                }}
+              />
+            )}
+            {nav === 'loops' && <LoopsPage projects={projects} project={project} />}
+            {nav === 'plugins' && <PluginsPage project={project} />}
+            {nav === 'settings' && <SettingsArea />}
+          </div>
+          {sidePanelOpen && (
+            <aside className="w-96 shrink-0 border-l border-border bg-panel">
+              <ChangesPanel changes={changes} />
+            </aside>
           )}
-          {nav === 'loops' && <LoopsPage projects={projects} project={project} />}
-          {nav === 'plugins' && <PluginsPage project={project} />}
-          {nav === 'settings' && <SettingsArea />}
         </div>
+        {bottomPanelOpen && (
+          <div className="h-64 shrink-0 border-t border-border">
+            <Terminal project={project} />
+          </div>
+        )}
       </main>
     </div>
+  );
+}
+
+function PanelToggle({
+  icon: Icon,
+  active,
+  onClick,
+  title,
+}: {
+  icon: LucideIcon;
+  active: boolean;
+  onClick: () => void;
+  title: string;
+}): React.ReactElement {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cls(
+        'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+        active ? 'bg-accent/20 text-accent' : 'text-muted hover:bg-panel2 hover:text-text',
+      )}
+    >
+      <Icon className="h-[17px] w-[17px]" strokeWidth={2} />
+    </button>
   );
 }
 

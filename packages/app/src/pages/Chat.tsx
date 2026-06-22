@@ -3,6 +3,9 @@ import { ArrowUp, Check, Copy, ListTodo, Mic, Paperclip, Plus, Square, Target } 
 import { api, sendChat, type ProjectSummary } from '../lib/api';
 import { Spinner, cls, money } from '../components/common';
 import { Markdown } from '../components/Markdown';
+import { DiffView } from '../components/DiffView';
+
+export type ChatChanges = { diff: string | null; filesChanged: string[] };
 
 type Msg = {
   role: 'user' | 'assistant' | 'system';
@@ -10,6 +13,8 @@ type Msg = {
   route?: string | null;
   costUsd?: number;
   pending?: boolean;
+  diff?: string | null;
+  filesChanged?: string[];
 };
 
 const EFFORTS = ['low', 'medium', 'high', 'max'] as const;
@@ -27,12 +32,14 @@ export function ChatPage({
   projects,
   onProjectChange,
   onSessionCreated,
+  onChanges,
 }: {
   chatId: string | null;
   project: string | null;
   projects: ProjectSummary[];
   onProjectChange: (cwd: string) => void;
   onSessionCreated: (id: string) => void;
+  onChanges?: (c: ChatChanges | null) => void;
 }): React.ReactElement {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
@@ -53,7 +60,18 @@ export function ChatPage({
       setLoadingHistory(true);
       void api
         .chat(project, chatId)
-        .then((r) => setMessages(r.messages.map((m) => ({ role: m.role, text: m.text, route: m.route, costUsd: m.costUsd }))))
+        .then((r) =>
+          setMessages(
+            r.messages.map((m) => ({
+              role: m.role,
+              text: m.text,
+              route: m.route,
+              costUsd: m.costUsd,
+              diff: m.diff,
+              filesChanged: m.filesChanged,
+            })),
+          ),
+        )
         .catch(() => setMessages([]))
         .finally(() => setLoadingHistory(false));
     } else {
@@ -65,6 +83,14 @@ export function ChatPage({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+
+  // Report the most recent assistant changes upward so the Changes side
+  // panel can mirror them.
+  useEffect(() => {
+    if (!onChanges) return;
+    const lastWithDiff = [...messages].reverse().find((m) => m.role === 'assistant' && (m.diff || m.filesChanged?.length));
+    onChanges(lastWithDiff ? { diff: lastWithDiff.diff ?? null, filesChanged: lastWithDiff.filesChanged ?? [] } : null);
+  }, [messages, onChanges]);
 
   const send = async (): Promise<void> => {
     const prompt = input.trim();
@@ -97,6 +123,8 @@ export function ChatPage({
                 last.text = e.text || last.text;
                 last.route = e.route;
                 last.costUsd = e.costUsd;
+                last.diff = e.diff;
+                last.filesChanged = e.filesChanged;
                 last.pending = false;
               }
               return next;
@@ -202,6 +230,11 @@ function MessageRow({ msg }: { msg: Msg }): React.ReactElement {
   return (
     <div className="group">
       {msg.text ? <Markdown text={msg.text} /> : msg.pending ? <span className="text-sm text-muted">Thinking…</span> : null}
+      {!msg.pending && (msg.diff || msg.filesChanged?.length) ? (
+        <div className="mt-2">
+          <DiffView diff={msg.diff} filesChanged={msg.filesChanged} />
+        </div>
+      ) : null}
       {!msg.pending && msg.text && (
         <div className="mt-1.5 flex items-center gap-3 text-[11px] text-muted opacity-0 transition-opacity group-hover:opacity-100">
           <button onClick={copy} className="inline-flex items-center gap-1 hover:text-text">
