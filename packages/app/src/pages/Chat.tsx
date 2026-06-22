@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Square } from 'lucide-react';
+import { ArrowUp, Check, Copy, Square } from 'lucide-react';
 import { api, sendChat, type ProjectSummary } from '../lib/api';
 import { Spinner, cls, money } from '../components/common';
+import { Markdown } from '../components/Markdown';
 
 type Msg = {
   role: 'user' | 'assistant' | 'system';
@@ -13,6 +14,12 @@ type Msg = {
 
 const EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 const MODES = ['agent', 'plan', 'debug', 'review'] as const;
+
+const SUGGESTIONS = [
+  'Fix the failing tests with minimal changes',
+  'Explain how this codebase is structured',
+  'Add tests for the most critical module',
+];
 
 export function ChatPage({
   chatId,
@@ -38,7 +45,6 @@ export function ChatPage({
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load history when opening an existing chat; reset for a new one.
   useEffect(() => {
     setError(null);
     if (chatId && chatId !== 'new') {
@@ -115,71 +121,95 @@ export function ChatPage({
   const stop = (): void => abortRef.current?.abort();
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void send();
     }
   };
 
+  const composer = (
+    <Composer
+      input={input}
+      setInput={setInput}
+      onSend={send}
+      onStop={stop}
+      onKeyDown={onKeyDown}
+      busy={busy}
+      mode={mode}
+      setMode={setMode}
+      effort={effort}
+      setEffort={setEffort}
+      project={project}
+      projects={projects}
+      onProjectChange={onProjectChange}
+      placeholder={messages.length ? 'Ask for follow-up changes…' : 'Do anything…'}
+    />
+  );
+
   const empty = messages.length === 0 && !loadingHistory;
 
-  return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col">
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-        {loadingHistory && <Spinner />}
-        {empty && (
-          <div className="flex h-full flex-col items-center justify-center pb-24 text-center">
-            <h2 className="text-2xl font-semibold">What should we build?</h2>
-            <p className="mt-2 text-sm text-muted">
-              Describe a task. CodeRouter routes it to the right model and runs it in your project.
-            </p>
-          </div>
-        )}
-        <div className="space-y-4 py-2">
-          {messages.map((m, i) => (
-            <MessageBubble key={i} msg={m} />
+  // Empty state: heading + composer centered together, Codex-style.
+  if (empty) {
+    return (
+      <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4">
+        <h2 className="mb-6 text-3xl font-semibold tracking-tight">What should we build?</h2>
+        <div className="w-full">{composer}</div>
+        {error && <div className="mt-3 w-full rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
+        <div className="mt-4 w-full divide-y divide-border/60 border-t border-border/60">
+          {SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setInput(s)}
+              className="flex w-full items-center gap-2 px-1 py-2.5 text-left text-sm text-muted transition-colors hover:text-text"
+            >
+              {s}
+            </button>
           ))}
         </div>
       </div>
+    );
+  }
 
+  return (
+    <div className="mx-auto flex h-full max-w-2xl flex-col">
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto py-2">
+        {loadingHistory && <Spinner />}
+        {messages.map((m, i) => (
+          <MessageRow key={i} msg={m} />
+        ))}
+      </div>
       {error && <div className="mb-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
-
-      <Composer
-        input={input}
-        setInput={setInput}
-        onSend={send}
-        onStop={stop}
-        onKeyDown={onKeyDown}
-        busy={busy}
-        mode={mode}
-        setMode={setMode}
-        effort={effort}
-        setEffort={setEffort}
-        project={project}
-        projects={projects}
-        onProjectChange={onProjectChange}
-      />
+      {composer}
     </div>
   );
 }
 
-function MessageBubble({ msg }: { msg: Msg }): React.ReactElement {
+function MessageRow({ msg }: { msg: Msg }): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+  const copy = (): void => {
+    void navigator.clipboard.writeText(msg.text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  };
+
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-accent/20 px-4 py-2 text-sm">{msg.text}</div>
+        <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-panel2 px-4 py-2.5 text-sm">{msg.text}</div>
       </div>
     );
   }
   return (
-    <div className="flex flex-col gap-1">
-      <div className="whitespace-pre-wrap rounded-2xl bg-panel px-4 py-3 text-sm leading-relaxed">
-        {msg.text || (msg.pending ? <span className="text-muted">Thinking…</span> : '')}
-        {msg.pending && msg.text && <span className="ml-0.5 inline-block h-3 w-1.5 animate-pulse bg-accent align-middle" />}
-      </div>
-      {(msg.route || msg.costUsd != null) && !msg.pending && (
-        <div className="px-2 text-[11px] text-muted">
-          {msg.route} {msg.costUsd ? `· ${money(msg.costUsd)}` : ''}
+    <div className="group">
+      {msg.text ? <Markdown text={msg.text} /> : msg.pending ? <span className="text-sm text-muted">Thinking…</span> : null}
+      {!msg.pending && msg.text && (
+        <div className="mt-1.5 flex items-center gap-3 text-[11px] text-muted opacity-0 transition-opacity group-hover:opacity-100">
+          <button onClick={copy} className="inline-flex items-center gap-1 hover:text-text">
+            {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+          {msg.route && <span>{msg.route}</span>}
+          {msg.costUsd ? <span>{money(msg.costUsd)}</span> : null}
         </div>
       )}
     </div>
@@ -200,6 +230,7 @@ function Composer({
   project,
   projects,
   onProjectChange,
+  placeholder,
 }: {
   input: string;
   setInput: (v: string) => void;
@@ -214,55 +245,44 @@ function Composer({
   project: string | null;
   projects: ProjectSummary[];
   onProjectChange: (cwd: string) => void;
+  placeholder: string;
 }): React.ReactElement {
   return (
-    <div className="mb-2 rounded-2xl border border-border bg-panel2 p-2 shadow-sm">
+    <div className="rounded-2xl border border-border bg-panel shadow-sm transition-colors focus-within:border-accent/60">
       <textarea
-        className="max-h-48 min-h-[44px] w-full resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted"
-        placeholder="Do anything…  (⌘↵ to send)"
+        className="max-h-52 min-h-[52px] w-full resize-none bg-transparent px-4 pt-3 text-sm outline-none placeholder:text-muted"
+        placeholder={placeholder}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKeyDown}
         rows={2}
       />
-      <div className="flex items-center gap-2 px-1 pt-1">
-        <select
-          className="rounded-md border border-border bg-panel px-2 py-1 text-xs text-muted outline-none"
-          value={project ?? ''}
-          onChange={(e) => onProjectChange(e.target.value)}
-        >
+      <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
+        <Pill value={project ?? ''} onChange={onProjectChange}>
           {projects.length === 0 && <option value="">no projects</option>}
           {projects.map((p) => (
             <option key={p.cwd} value={p.cwd}>
               {p.name}
             </option>
           ))}
-        </select>
-        <select
-          className="rounded-md border border-border bg-panel px-2 py-1 text-xs text-muted outline-none"
-          value={mode}
-          onChange={(e) => setMode(e.target.value)}
-        >
+        </Pill>
+        <Pill value={mode} onChange={setMode}>
           {MODES.map((m) => (
             <option key={m} value={m}>
               {m}
             </option>
           ))}
-        </select>
-        <select
-          className="rounded-md border border-border bg-panel px-2 py-1 text-xs text-muted outline-none capitalize"
-          value={effort}
-          onChange={(e) => setEffort(e.target.value)}
-        >
+        </Pill>
+        <Pill value={effort} onChange={setEffort} className="capitalize">
           {EFFORTS.map((e) => (
             <option key={e} value={e}>
               {e}
             </option>
           ))}
-        </select>
+        </Pill>
         <div className="ml-auto">
           {busy ? (
-            <button onClick={onStop} className="flex h-8 w-8 items-center justify-center rounded-full bg-panel text-text hover:bg-border" title="Stop">
+            <button onClick={onStop} className="flex h-8 w-8 items-center justify-center rounded-full bg-panel2 text-text hover:bg-border" title="Stop">
               <Square className="h-3.5 w-3.5" />
             </button>
           ) : (
@@ -271,7 +291,7 @@ function Composer({
               disabled={!input.trim() || !project}
               className={cls(
                 'flex h-8 w-8 items-center justify-center rounded-full transition-colors',
-                input.trim() && project ? 'bg-accent text-white hover:bg-accent/80' : 'bg-border text-muted',
+                input.trim() && project ? 'bg-accent text-white hover:bg-accent/80' : 'bg-panel2 text-muted',
               )}
               title="Send"
             >
@@ -281,5 +301,30 @@ function Composer({
         </div>
       </div>
     </div>
+  );
+}
+
+function Pill({
+  value,
+  onChange,
+  children,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  children: React.ReactNode;
+  className?: string;
+}): React.ReactElement {
+  return (
+    <select
+      className={cls(
+        'rounded-md border border-border bg-panel2 px-2 py-1 text-xs text-muted outline-none transition-colors hover:text-text',
+        className,
+      )}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {children}
+    </select>
   );
 }
