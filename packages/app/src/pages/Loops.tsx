@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Check, Pause, Play, Square, X } from 'lucide-react';
 import type { LoopIteration, LoopRecord, LoopSpec, LoopValidation } from '@coderouter/core';
 import { api, type PresetInfo, type ProjectSummary } from '../lib/api';
 import { useLoopEvents } from '../lib/events';
@@ -221,7 +222,7 @@ function NewLoop({
               disabled={busy || spec.verifier.commands.length === 0}
               onClick={() => void save(true)}
             >
-              {busy ? <Spinner /> : '▶'} Approve & run
+              {busy ? <Spinner /> : <Play className="h-4 w-4" />} Approve & run
             </button>
           </div>
         </Section>
@@ -359,26 +360,26 @@ function LoopDetail({ cwd, id, onBack }: { cwd: string; id: string; onBack: () =
         <div className="flex flex-wrap justify-end gap-2">
           {(loop.status === 'draft' || loop.status === 'paused' || loop.status === 'stopped' || loop.status === 'failed') && (
             <button className="btn btn-primary" disabled={busy} onClick={() => void act(() => api.startLoop(cwd, id))}>
-              ▶ Run
+              <Play className="h-4 w-4" /> Run
             </button>
           )}
           {running && (
             <>
               <button className="btn" disabled={busy} onClick={() => void act(() => api.pauseLoop(cwd, id))}>
-                ⏸ Pause
+                <Pause className="h-4 w-4" /> Pause
               </button>
               <button className="btn btn-danger" disabled={busy} onClick={() => void act(() => api.stopLoop(cwd, id))}>
-                ■ Stop
+                <Square className="h-4 w-4" /> Stop
               </button>
             </>
           )}
           {loop.status === 'awaiting_approval' && (
             <>
               <button className="btn btn-primary" disabled={busy} onClick={() => void act(() => api.approveLoop(cwd, id))}>
-                ✓ Approve & merge
+                <Check className="h-4 w-4" /> Approve & merge
               </button>
               <button className="btn btn-danger" disabled={busy} onClick={() => void act(() => api.rejectLoop(cwd, id))}>
-                ✗ Reject
+                <X className="h-4 w-4" /> Reject
               </button>
             </>
           )}
@@ -444,8 +445,13 @@ function IterationRow({ it }: { it: LoopIteration }): React.ReactElement {
           {it.summary && <div className="text-sm text-muted">{it.summary}</div>}
           {it.verifier.map((v, i) => (
             <div key={i} className="rounded-md border border-border bg-panel2 p-2">
-              <div className="font-mono text-xs">
-                <span className={v.ok ? 'text-ok' : 'text-bad'}>{v.ok ? '✓' : '✗'}</span> $ {v.command}{' '}
+              <div className="flex items-center gap-1.5 font-mono text-xs">
+                {v.ok ? (
+                  <Check className="h-3.5 w-3.5 shrink-0 text-ok" />
+                ) : (
+                  <X className="h-3.5 w-3.5 shrink-0 text-bad" />
+                )}
+                <span>$ {v.command}</span>
                 <span className="text-muted">(exit {v.exitCode})</span>
               </div>
               {!v.ok && v.output && (

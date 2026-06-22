@@ -68,7 +68,14 @@ async function ensureDaemon(): Promise<DaemonInfo> {
   }
 
   const { cmd, args } = resolveCli();
-  const child = spawn(cmd, [...args, 'daemon'], { detached: true, stdio: 'ignore' });
+  // When spawning via Electron's own binary (process.execPath), it must be
+  // told to behave as plain Node, otherwise it boots a second app instance.
+  const runAsNode = cmd === process.execPath;
+  const child = spawn(cmd, [...args, 'daemon'], {
+    detached: true,
+    stdio: 'ignore',
+    env: runAsNode ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
+  });
   child.unref();
 
   const deadline = Date.now() + 15_000;
@@ -87,6 +94,10 @@ async function ensureDaemon(): Promise<DaemonInfo> {
 let daemonUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
 
 async function createWindow(): Promise<void> {
+  // Window icon for dev (Linux/Windows taskbar). Packaged builds use the
+  // electron-builder icon from build/. Guard so a missing file is harmless.
+  const iconPath = join(__dirname, '..', 'build', 'icon.png');
+  const icon = existsSync(iconPath) ? iconPath : undefined;
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -94,6 +105,7 @@ async function createWindow(): Promise<void> {
     minHeight: 600,
     backgroundColor: '#0b0d12',
     title: 'CodeRouter Studio',
+    icon,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),

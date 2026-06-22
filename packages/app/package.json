@@ -16,14 +16,15 @@
     "package": "npm run build && electron-builder"
   },
   "dependencies": {
-    "@coderouter/core": "workspace:*"
+    "@coderouter/core": "workspace:*",
+    "lucide-react": "^1.21.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "electron": "^33.2.0",
+    "electron": "^42.0.0",
     "electron-builder": "^25.1.8",
     "postcss": "^8.4.49",
     "react": "^18.3.1",

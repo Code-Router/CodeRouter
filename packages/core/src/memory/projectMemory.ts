@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises';
-import { glob } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export type ProjectMemoryFragment = {
@@ -53,11 +52,11 @@ export async function loadProjectMemory(cwd: string): Promise<ProjectMemory> {
   await tryRead(join(cwd, '.cursorrules'), 'cursorrules', 3);
 
   try {
-    const rules: string[] = [];
-    for await (const entry of glob('**/*.md', { cwd: join(cwd, '.cursor/rules') })) {
-      rules.push(entry);
-    }
-    for (const rel of rules.sort()) {
+    // Recursive readdir keeps this runnable on Node 20 (Electron's bundled
+    // runtime); fs/promises `glob` only landed in Node 22.
+    const entries = await readdir(join(cwd, '.cursor/rules'), { recursive: true });
+    const rules = entries.filter((rel) => rel.endsWith('.md')).sort();
+    for (const rel of rules) {
       await tryRead(join(cwd, '.cursor/rules', rel), 'cursor-rule', 4);
     }
   } catch {
