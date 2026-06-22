@@ -16,7 +16,12 @@ import type {
 
 declare global {
   interface Window {
-    coderouter?: { getDaemonUrl: () => Promise<string>; isElectron: boolean; platform?: string };
+    coderouter?: {
+      getDaemonUrl: () => Promise<string>;
+      isElectron: boolean;
+      platform?: string;
+      pickFolder?: () => Promise<string | null>;
+    };
   }
 }
 

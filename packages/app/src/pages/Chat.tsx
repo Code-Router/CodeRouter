@@ -20,6 +20,8 @@ type Msg = {
 
 const EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 const MODES = ['agent', 'plan', 'debug', 'review'] as const;
+/** Sentinel option value: triggers the folder picker rather than selecting a project. */
+const ADD_FOLDER = '__add_folder__';
 
 const SUGGESTIONS = [
   'Fix the failing tests with minimal changes',
@@ -32,6 +34,7 @@ export function ChatPage({
   project,
   projects,
   onProjectChange,
+  onAddFolder,
   onSessionCreated,
   onChanges,
 }: {
@@ -39,6 +42,7 @@ export function ChatPage({
   project: string | null;
   projects: ProjectSummary[];
   onProjectChange: (cwd: string) => void;
+  onAddFolder?: () => void;
   onSessionCreated: (id: string) => void;
   onChanges?: (c: ChatChanges | null) => void;
 }): React.ReactElement {
@@ -171,6 +175,7 @@ export function ChatPage({
       project={project}
       projects={projects}
       onProjectChange={onProjectChange}
+      onAddFolder={onAddFolder}
       placeholder={messages.length ? 'Ask for follow-up changes…' : 'Do anything…'}
     />
   );
@@ -264,6 +269,7 @@ function Composer({
   project,
   projects,
   onProjectChange,
+  onAddFolder,
   placeholder,
 }: {
   input: string;
@@ -279,6 +285,7 @@ function Composer({
   project: string | null;
   projects: ProjectSummary[];
   onProjectChange: (cwd: string) => void;
+  onAddFolder?: () => void;
   placeholder: string;
 }): React.ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -347,9 +354,12 @@ function Composer({
 
         <Pill
           value={project ?? ''}
-          onChange={onProjectChange}
+          onChange={(v) => (v === ADD_FOLDER ? onAddFolder?.() : onProjectChange(v))}
           placeholder="no projects"
-          options={projects.map((p) => ({ value: p.cwd, label: p.name }))}
+          options={[
+            ...projects.map((p) => ({ value: p.cwd, label: p.name })),
+            ...(onAddFolder ? [{ value: ADD_FOLDER, label: '+ Add folder…' }] : []),
+          ]}
         />
         <Pill value={mode} onChange={setMode} options={MODES.map((m) => ({ value: m, label: m }))} />
         <Pill value={effort} onChange={setEffort} capitalize options={EFFORTS.map((e) => ({ value: e, label: e }))} />

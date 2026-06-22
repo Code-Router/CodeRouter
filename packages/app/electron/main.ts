@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 /**
  * CodeRouter Studio — Electron main process.
@@ -92,6 +92,7 @@ async function ensureDaemon(): Promise<DaemonInfo> {
 }
 
 let daemonUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
+let mainWindow: BrowserWindow | null = null;
 
 async function createWindow(): Promise<void> {
   // Window icon for dev (Linux/Windows taskbar). Packaged builds use the
@@ -114,6 +115,11 @@ async function createWindow(): Promise<void> {
     },
   });
 
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
@@ -128,6 +134,14 @@ async function createWindow(): Promise<void> {
 }
 
 ipcMain.handle('daemon:url', () => daemonUrl);
+
+ipcMain.handle('dialog:pickFolder', async () => {
+  const opts = { properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> };
+  const res = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, opts)
+    : await dialog.showOpenDialog(opts);
+  return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
+});
 
 app.whenReady().then(async () => {
   const info = await ensureDaemon();

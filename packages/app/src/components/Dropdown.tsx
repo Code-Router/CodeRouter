@@ -55,6 +55,7 @@ export function Dropdown({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
+  const [openUp, setOpenUp] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -82,6 +83,13 @@ export function Dropdown({
     if (open) {
       setQuery('');
       setActive(Math.max(0, filtered.findIndex((o) => o.value === value)));
+      // Flip the menu above the trigger when there isn't room below it.
+      const rect = wrapRef.current?.getBoundingClientRect();
+      if (rect) {
+        const estimate = Math.min(340, options.length * 36 + (searchable ? 44 : 0) + 16);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        setOpenUp(spaceBelow < estimate && rect.top > spaceBelow);
+      }
       if (searchable) setTimeout(() => inputRef.current?.focus(), 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,7 +144,8 @@ export function Dropdown({
       {open && (
         <div
           className={cls(
-            'absolute z-50 mt-1.5 overflow-hidden rounded-lg border border-border bg-panel shadow-xl shadow-black/40',
+            'absolute z-50 overflow-hidden rounded-lg border border-border bg-panel shadow-xl shadow-black/40',
+            openUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5',
             align === 'right' ? 'right-0' : 'left-0',
             menuWidth ?? 'min-w-full',
           )}

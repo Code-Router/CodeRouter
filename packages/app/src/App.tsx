@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Blocks,
   ChevronRight,
   Folder,
   FolderOpen,
+  FolderPlus,
   LayoutDashboard,
   type LucideIcon,
   PanelBottom,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { api, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
 import { LoopEventsProvider, useDaemonConnected } from './lib/events';
+import { useTheme, type ThemePref } from './lib/theme';
 import { cls } from './components/common';
 import { Logo } from './components/Logo';
 import { Terminal } from './components/Terminal';
@@ -52,6 +54,13 @@ function Shell(): React.ReactElement {
   const [chatId, setChatId] = useState<string | null>(null);
   const [chatsKey, setChatsKey] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [addedProjects, setAddedProjects] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('cr.addedProjects') || '[]') as string[];
+    } catch {
+      return [];
+    }
+  });
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
@@ -101,6 +110,49 @@ function Shell(): React.ReactElement {
     return map;
   }, [chats]);
 
+  // Daemon-known projects plus any folders the user added manually (which
+  // may not have CodeRouter history yet, so they aren't in the DB).
+  const allProjects = useMemo(() => {
+    const known = new Set(projects.map((p) => p.cwd));
+    const extras: ProjectSummary[] = addedProjects
+      .filter((cwd) => !known.has(cwd))
+      .map((cwd) => ({
+        cwd,
+        name: cwd.replace(/\/+$/, '').split('/').pop() || cwd,
+        lastSeen: 0,
+        runs: 0,
+        loops: 0,
+        chats: 0,
+        costUsd: 0,
+        lastActivity: 0,
+      }));
+    return [...extras, ...projects];
+  }, [projects, addedProjects]);
+
+  const addFolder = async (): Promise<void> => {
+    let dir: string | null = null;
+    const picker = window.coderouter?.pickFolder;
+    if (picker) dir = await picker();
+    else {
+      const typed = window.prompt('Add a project folder (absolute path):');
+      dir = typed && typed.trim() ? typed.trim() : null;
+    }
+    if (!dir) return;
+    const path = dir;
+    setAddedProjects((prev) => {
+      const next = prev.includes(path) ? prev : [path, ...prev];
+      try {
+        localStorage.setItem('cr.addedProjects', JSON.stringify(next));
+      } catch {
+        /* ignore quota errors */
+      }
+      return next;
+    });
+    setProject(path);
+    setExpanded((e) => new Set(e).add(path));
+    newChat();
+  };
+
   const newChat = (): void => {
     setChatId('new');
     setNav('chat');
@@ -120,7 +172,7 @@ function Shell(): React.ReactElement {
     });
   };
 
-  const activeName = projects.find((p) => p.cwd === project)?.name;
+  const activeName = allProjects.find((p) => p.cwd === project)?.name;
 
   return (
     <div className="flex h-full">
@@ -161,9 +213,21 @@ function Shell(): React.ReactElement {
             );
           })}
 
-          <SectionLabel>Projects</SectionLabel>
-          {projects.length === 0 && <Empty>No projects yet</Empty>}
-          {projects.map((p) => {
+          <SectionLabel
+            action={
+              <button
+                onClick={() => void addFolder()}
+                title="Add a project folder"
+                className="no-drag flex h-5 w-5 items-center justify-center rounded text-muted transition-colors hover:bg-panel2 hover:text-text"
+              >
+                <FolderPlus className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            }
+          >
+            Projects
+          </SectionLabel>
+          {allProjects.length === 0 && <Empty>No projects yet</Empty>}
+          {allProjects.map((p) => {
             const open = expanded.has(p.cwd);
             const pChats = chatsByProject.get(p.cwd) ?? [];
             return (
@@ -209,17 +273,7 @@ function Shell(): React.ReactElement {
         </nav>
 
         <div className="px-2 pb-2">
-          <button
-            onClick={() => setNav('settings')}
-            className={cls(
-              'no-drag flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[15px] font-medium transition-colors',
-              nav === 'settings' ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
-            )}
-          >
-            <SettingsIcon className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
-            Settings
-            {!connected && <span className="ml-auto h-2 w-2 rounded-full bg-bad" title="daemon offline" />}
-          </button>
+          <SidebarSettings active={nav === 'settings'} connected={connected} onOpenSettings={() => setNav('settings')} />
         </div>
       </aside>
       )}
@@ -257,8 +311,9 @@ function Shell(): React.ReactElement {
               <ChatPage
                 chatId={chatId}
                 project={project}
-                projects={projects}
+                projects={allProjects}
                 onProjectChange={setProject}
+                onAddFolder={() => void addFolder()}
                 onChanges={setChanges}
                 onSessionCreated={(id) => {
                   setChatId(id);
@@ -267,7 +322,7 @@ function Shell(): React.ReactElement {
                 }}
               />
             )}
-            {nav === 'loops' && <LoopsPage projects={projects} project={project} />}
+            {nav === 'loops' && <LoopsPage projects={allProjects} project={project} />}
             {nav === 'plugins' && <PluginsPage project={project} />}
             {nav === 'settings' && <SettingsArea />}
           </div>
@@ -312,8 +367,106 @@ function PanelToggle({
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }): React.ReactElement {
-  return <div className="px-2 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-muted">{children}</div>;
+function SectionLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }): React.ReactElement {
+  return (
+    <div className="flex items-center justify-between px-2 pb-1 pt-4">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">{children}</span>
+      {action}
+    </div>
+  );
+}
+
+/** Bottom-left settings entry: opens a popup (Codex-style) rather than
+ *  jumping straight into the settings section. */
+function SidebarSettings({
+  active,
+  connected,
+  onOpenSettings,
+}: {
+  active: boolean;
+  connected: boolean;
+  onOpenSettings: () => void;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={cls(
+          'no-drag flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[15px] font-medium transition-colors',
+          active || open ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+        )}
+      >
+        <SettingsIcon className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
+        Settings
+        {!connected && <span className="ml-auto h-2 w-2 rounded-full bg-bad" title="daemon offline" />}
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-lg border border-border bg-panel shadow-xl shadow-black/40">
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+            <Logo className="h-5 w-5" />
+            <span className="text-sm font-semibold text-text">CodeRouter</span>
+            <span className="ml-auto flex items-center gap-1.5 text-xs text-muted">
+              <span className={cls('h-1.5 w-1.5 rounded-full', connected ? 'bg-ok' : 'bg-bad')} />
+              {connected ? 'Connected' : 'Offline'}
+            </span>
+          </div>
+          <div className="p-1">
+            <button
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-text transition-colors hover:bg-panel2"
+            >
+              <SettingsIcon className="h-4 w-4 text-muted" strokeWidth={2} />
+              Settings
+            </button>
+          </div>
+          <div className="border-t border-border px-3 py-2.5">
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">Appearance</div>
+            <ThemeToggle />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThemeToggle(): React.ReactElement {
+  const { pref, setPref } = useTheme();
+  const opts: Array<{ id: ThemePref; label: string }> = [
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'system', label: 'System' },
+  ];
+  return (
+    <div className="inline-flex w-full overflow-hidden rounded-md border border-border">
+      {opts.map((o) => (
+        <button
+          key={o.id}
+          onClick={() => setPref(o.id)}
+          className={cls(
+            'flex-1 px-2 py-1 text-xs transition-colors',
+            pref === o.id ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function Empty({ children }: { children: React.ReactNode }): React.ReactElement {
