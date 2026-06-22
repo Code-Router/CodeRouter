@@ -95,12 +95,15 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   const images = [...detectedImages, ...(input.images ?? [])];
   const requiresVision = images.length > 0;
 
-  const route = input.route
+  let route = input.route
     ? parseRoute(input.route)
     : pick(classification, ctx.router, { effort, requiresVision });
 
-  // If vision was required but no vision model is available, warn and
-  // proceed text-only rather than failing outright.
+  // If vision was required but no vision model is available, the router
+  // hands back a `no-vision-model` sentinel (provider 'none'). Warn,
+  // drop the images, and re-route WITHOUT the vision constraint so we
+  // still produce a (text-only) answer instead of crashing on the
+  // sentinel's bogus provider.
   if (requiresVision && route.model === 'no-vision-model') {
     progress({
       phase: 'agent/route',
@@ -108,6 +111,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       data: { warning: 'no vision-capable model is enabled; running text-only — enable one in /setup' },
     });
     images.length = 0; // clear so we don't try to attach
+    route = input.route ? parseRoute(input.route) : pick(classification, ctx.router, { effort });
   }
 
   const adapter: Adapter = ctx.resolveAdapter

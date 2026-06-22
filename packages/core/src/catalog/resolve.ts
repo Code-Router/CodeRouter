@@ -82,6 +82,19 @@ export function resolveIntent(
   const forbidRoutes = new Set(opts.forbidRoutes ?? []);
   const prefer = opts.preferProviders ?? [];
 
+  // Providers whose concrete model is chosen later from a live catalog
+  // (OpenRouter). Their static catalog entry is a placeholder, so we must
+  // NOT gate them on the placeholder's `visionInput` flag — the actual
+  // vision filtering happens in `selectSmartModel` below (or, when the
+  // catalog is offline, via the curated fallback model which is itself
+  // vision-capable).
+  const dynamicProviders = new Set(
+    registry
+      .list()
+      .filter((p) => p.dynamicCatalog === 'openrouter')
+      .map((p) => p.name),
+  );
+
   const candidates = CATALOG.flatMap((entry) => {
     if (forbidRoutes.has(`${entry.provider},${entry.model}`)) return [];
     if (!registry.has(entry.provider)) return [];
@@ -90,7 +103,13 @@ export function resolveIntent(
     // ollama: the registry says "ready" when ANY configured model is
     // pulled, but this specific catalog entry's model may not be.
     if (entry.provider === 'ollama' && !isOllamaModelInstalled(entry.model)) return [];
-    if (opts.requireVision && !entry.capabilities?.visionInput) return [];
+    if (
+      opts.requireVision &&
+      !entry.capabilities?.visionInput &&
+      !dynamicProviders.has(entry.provider)
+    ) {
+      return [];
+    }
     const binding = entry.intents.find((b) => b.intent === intent);
     if (!binding) return [];
     let rank = binding.rank;

@@ -333,6 +333,30 @@ describe('pick with requiresVision', () => {
     expect(route.model).toBe('no-vision-model');
   });
 
+  it('resolves a vision route when only OpenRouter is configured', () => {
+    // Regression: OpenRouter's static catalog entries carry no static
+    // `visionInput` flag (their real model is picked dynamically), so a
+    // naive static gate dropped them under requiresVision and the router
+    // fell back to the `no-vision-model` sentinel even though OpenRouter
+    // has plenty of vision models.
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    process.env.PATH = '';
+    const ctx = { registry: new ProviderRegistry(defaultProviders()) };
+    const route = pick(
+      classification({ taskType: 'feature' }),
+      ctx,
+      { requiresVision: true },
+    );
+    expect(route.model).not.toBe('no-vision-model');
+    expect(route.via).toMatch(/openrouter/);
+    expect(route.rationale).toMatch(/vision/);
+  });
+
   it('bypasses memory-biased non-vision routes when requiresVision is set', () => {
     envSetup();
     const ctx = {
