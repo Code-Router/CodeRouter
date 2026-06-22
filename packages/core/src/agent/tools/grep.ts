@@ -1,5 +1,5 @@
 import { exec } from '../../sandbox/exec.js';
-import { whichSync } from '../../sandbox/which.js';
+import { resolveRipgrep } from '../../sandbox/ripgrep.js';
 import type { Tool, ToolContext, ToolResult } from '../types.js';
 import { MAX_GREP_BYTES, clip, quoted, shortPath, stringArg } from './helpers.js';
 
@@ -41,7 +41,7 @@ async function runGrep(
   ctx: ToolContext,
   args: { pattern: string; path?: string; type?: string; ignoreCase: boolean },
 ): Promise<ToolResult> {
-  const rg = whichSync('rg');
+  const rg = resolveRipgrep();
   if (rg) {
     const rgArgs: string[] = ['--line-number', '--no-heading', '--color=never'];
     if (args.ignoreCase) rgArgs.push('-i');
@@ -51,7 +51,7 @@ async function runGrep(
     // under `exec`) ripgrep otherwise blocks reading from stdin
     // instead of recursing into cwd.
     rgArgs.push(args.path ?? '.');
-    const { stdout, exitCode } = await exec('rg', rgArgs, {
+    const { stdout, exitCode } = await exec(rg, rgArgs, {
       cwd: ctx.cwd,
       signal: ctx.signal,
     });
