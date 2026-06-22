@@ -8,6 +8,7 @@ import { runInitCommand } from './commands/init.js';
 import { runDashboardCommand } from './commands/dashboard.js';
 import { loadCredentialsIntoEnv } from './ui/setup.js';
 import { BRAND_NAME } from './branding/index.js';
+import { CLI_VERSION } from './version.js';
 
 export async function runCli(argv: string[]): Promise<void> {
   // Hydrate API keys saved via the REPL's /setup wizard
@@ -24,7 +25,7 @@ export async function runCli(argv: string[]): Promise<void> {
   program
     .name('coderouter')
     .description(`${BRAND_NAME} - route smarter. build faster.`)
-    .version('0.1.0');
+    .version(CLI_VERSION);
 
   // Default (no subcommand) -> REPL
   program

@@ -36,6 +36,7 @@ import {
   WORDMARK_SMALL,
   WORDMARK_TAGLINE,
 } from '../branding/index.js';
+import { CLI_VERSION } from '../version.js';
 import {
   CREDENTIALS_PATH,
   SETUP_PROVIDERS,
@@ -2321,7 +2322,7 @@ function WordmarkPanel(): React.ReactElement {
           {'  '}{BRAND_GLYPH}{'  '}
         </Text>
         <Text color="gray">{WORDMARK_TAGLINE}</Text>
-        <Text color="gray">{`   ${BRAND_NAME} v0.1.0`}</Text>
+        <Text color="gray">{`   ${BRAND_NAME} v${CLI_VERSION}`}</Text>
       </Box>
     </Box>
   );
