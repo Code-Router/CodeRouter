@@ -16,6 +16,7 @@ import {
 } from './lockfile.js';
 import { handlePtyUpgrade } from './pty.js';
 import { getSupervisor } from './supervisor.js';
+import { assertWithinSpendingLimit } from '../spend.js';
 
 /**
  * CodeRouter daemon ("app-server").
@@ -481,6 +482,7 @@ async function handleLoops(
   if (method === 'POST') {
     switch (action) {
       case 'start':
+        await assertWithinSpendingLimit(project);
         await sup.start(project, loopId).catch((e) => {
           throw e;
         });
@@ -489,6 +491,7 @@ async function handleLoops(
         sup.pause(loopId);
         return reply(res, 200, { ok: true });
       case 'resume':
+        await assertWithinSpendingLimit(project);
         await sup.resume(project, loopId);
         return reply(res, 200, { ok: true });
       case 'stop':

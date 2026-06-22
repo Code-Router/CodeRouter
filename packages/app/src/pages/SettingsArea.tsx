@@ -3,6 +3,7 @@ import { ArrowLeft } from 'lucide-react';
 import { Tabs } from '../components/common';
 import { SettingsPage } from './Settings';
 import { ModelsPage } from './Models';
+import { SpendingPage } from './Spending';
 
 /** Settings hub: provider/host configuration plus model tier preferences. */
 export function SettingsArea({ onBack }: { onBack?: () => void }): React.ReactElement {
@@ -22,11 +23,12 @@ export function SettingsArea({ onBack }: { onBack?: () => void }): React.ReactEl
         tabs={[
           { id: 'general', label: 'General' },
           { id: 'models', label: 'Models' },
+          { id: 'spending', label: 'Spending' },
         ]}
         active={tab}
         onChange={setTab}
       />
-      {tab === 'general' ? <SettingsPage /> : <ModelsPage />}
+      {tab === 'general' ? <SettingsPage /> : tab === 'models' ? <ModelsPage /> : <SpendingPage />}
     </div>
   );
 }

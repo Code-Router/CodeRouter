@@ -1,16 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { api, type UsageReport } from '../lib/api';
+import { api, type SettingsReport, type UsageReport } from '../lib/api';
 import { Heatmap } from '../components/Heatmap';
 import { Section, Spinner, money } from '../components/common';
+import { DEFAULT_LIMIT_USD, SpendingProgress } from './Spending';
 
 export function OverviewPage(): React.ReactElement {
   const [data, setData] = useState<UsageReport | null>(null);
+  const [settings, setSettings] = useState<SettingsReport | null>(null);
   useEffect(() => {
     void api.usage().then(setData).catch(() => {});
+    void api.settings().then(setSettings).catch(() => {});
   }, []);
   if (!data) return <Spinner />;
   const t = data.totals;
   const h = data.highlights;
+  const limit = settings?.limits.monthlyUsd ?? DEFAULT_LIMIT_USD;
 
   return (
     <div>
@@ -20,6 +24,19 @@ export function OverviewPage(): React.ReactElement {
         <Big label="Tokens" value={fmt(t.tokens)} />
         <Big label="Projects" value={String(data.project.projectCount)} />
       </div>
+
+      <Section title="Monthly spend">
+        <div className="card">
+          <div className="mb-3 flex items-baseline justify-between">
+            <span className="text-sm text-muted">This month</span>
+            <span className="text-sm">
+              <span className="font-semibold">{money(t.monthCostUsd)}</span>
+              <span className="text-muted"> / {money(limit)}</span>
+            </span>
+          </div>
+          <SpendingProgress spent={t.monthCostUsd} limit={limit} />
+        </div>
+      </Section>
 
       <Section title="Activity">
         <div className="card">

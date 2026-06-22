@@ -29,6 +29,7 @@ import type {
 import type { Report } from '@coderouter/core';
 import { spinnerProgress } from './ui/progress.js';
 import { getPreferredModels } from './ui/setup.js';
+import { assertWithinSpendingLimit } from './spend.js';
 
 export type ProgressAdapter = {
   notifier: ProgressNotifier;
@@ -166,6 +167,9 @@ export async function executeRun(opts: CliRunOpts): Promise<{
   output: ModeOutput;
   store: Store;
 }> {
+  // Enforce the monthly spending cap before doing any billable work.
+  await assertWithinSpendingLimit(opts.cwd);
+
   const { registry, router, store } = await buildExecutionEnv(opts.cwd);
   // Stable conversation id: the REPL passes one per session so turns
   // group into a single browsable chat; one-shot runs get a fresh id.

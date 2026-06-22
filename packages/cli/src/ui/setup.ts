@@ -212,8 +212,15 @@ export function setHostEnabled(provider: HostProvider, enabled: boolean): void {
 }
 
 /**
+ * Default monthly spending cap (USD) enforced when the user hasn't set one.
+ * CodeRouter always has a cap so runaway agent loops can't quietly burn
+ * through an API budget.
+ */
+export const DEFAULT_MONTHLY_LIMIT_USD = 50;
+
+/**
  * Read the persisted monthly spending limit (USD). Returns `null` when
- * unset or invalid, meaning "no cap".
+ * unset or invalid, meaning "use the default cap".
  */
 export function getSpendingLimit(): { monthlyUsd: number | null } {
   try {
@@ -226,8 +233,17 @@ export function getSpendingLimit(): { monthlyUsd: number | null } {
 }
 
 /**
+ * The monthly limit actually enforced: the user's value if set, else the
+ * default cap. Always a positive number — there is always a cap.
+ */
+export function getEffectiveSpendingLimit(): number {
+  const v = getSpendingLimit().monthlyUsd;
+  return typeof v === 'number' && v > 0 ? v : DEFAULT_MONTHLY_LIMIT_USD;
+}
+
+/**
  * Persist (or clear) the monthly spending limit. Passing `null` or a
- * non-positive number removes the cap.
+ * non-positive number removes the explicit cap (falling back to the default).
  */
 export function setSpendingLimit(monthlyUsd: number | null): void {
   let existing: CredentialsFile = {};
