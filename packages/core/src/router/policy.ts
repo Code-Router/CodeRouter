@@ -51,6 +51,14 @@ export type PickOptions = {
   effort?: Effort;
   /** If true, callers want a cheap route even on high-shape requests (used for handoff-fix). */
   forceCheap?: boolean;
+  /**
+   * When true, the prompt contains images and only vision-capable
+   * models are eligible. Bypasses non-vision shortcuts (memory bias,
+   * instant, preferred-model) and constrains intent resolution to
+   * entries with visionInput. Returns null when no vision model is
+   * available so the caller can warn + fall back to text-only.
+   */
+  requiresVision?: boolean;
 };
 
 const SHAPES_NEED_REASONING: (keyof CognitiveShape)[] = [
@@ -78,13 +86,44 @@ export function pick(
     if (!o.taskType || o.taskType === classification.taskType) return o.routeRef;
   }
 
-  // 2) Memory: preferred routes with stronger weight than the defaults.
-  if (ctx.memoryBias?.preferredRoutes?.length) {
-    const top = ctx.memoryBias.preferredRoutes[0];
-    if (top) {
-      const ref = parseRouteRef(top.route);
-      if (ref && !isForbidden(ref, ctx)) return { ...ref, rationale: `memory: ${top.reason}` };
+  // 1b) Vision-constrained routing. When the prompt contains images,
+  //     bypass all non-vision shortcuts (memory, instant, preferred)
+  //     and only pick from vision-capable models. Falls through the
+  //     intent chain until one resolves, or returns a sentinel that
+  //     the mode interprets as "no vision model available".
+  if (opts.requiresVision) {
+    const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
+    const visionOpts = { forbidRoutes, requireVision: true };
+    const intentsToTry: Intent[] = ['balanced-agent', 'multi-file', 'huge-context', 'deep-reasoning', 'fast-cheap'];
+    for (const intent of intentsToTry) {
+      const r = resolveIntent(intent, ctx.registry, visionOpts);
+      if (r) return { ...r, rationale: `vision:${r.rationale}` };
     }
+    // No vision-capable model is ready; return a sentinel the mode can detect.
+    return {
+      provider: 'none' as RouteRef['provider'],
+      model: 'no-vision-model',
+      rationale: 'no vision-capable model is configured/enabled',
+      via: 'none',
+    };
+  }
+
+  // 2) Memory: preferred routes with stronger weight than the defaults.
+  //    Walk the list in success-rank order and return the first route
+  //    whose provider is still registered AND ready. Skipping the
+  //    readiness check here was a bug: a provider the user has since
+  //    disabled (e.g. /setup toggled Claude Code off ->
+  //    CODEROUTER_DISABLE_CLAUDE_CODE=1) would still get picked purely
+  //    because it had a strong historical success rate, silently
+  //    overriding the user's choice. Now a disabled / unconfigured
+  //    preferred route falls through to the catalog selection.
+  for (const top of ctx.memoryBias?.preferredRoutes ?? []) {
+    const ref = parseRouteRef(top.route);
+    if (!ref) continue;
+    if (isForbidden(ref, ctx)) continue;
+    const providerName = ref.via ?? ref.provider;
+    if (!ctx.registry.has(providerName) || !ctx.registry.isReady(providerName)) continue;
+    return { ...ref, rationale: `memory: ${top.reason}` };
   }
 
   // 3) Instant routes (typo, format, commit-message...) always win.

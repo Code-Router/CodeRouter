@@ -11,6 +11,8 @@ import type {
 } from '@coderouter/core';
 import {
   agent,
+  ConversationHistory,
+  detectPromptImages,
   renderReportFooterText,
   renderReportText,
   sandbox,
@@ -39,6 +41,7 @@ import {
 import { CLI_VERSION } from '../version.js';
 import {
   CREDENTIALS_PATH,
+  SEARCH_PROVIDERS,
   SETUP_PROVIDERS,
   type SetupProvider,
   detectConfiguredProviders,
@@ -57,7 +60,7 @@ import type { DetectedHost } from './hosts.js';
  */
 type ManagerRow =
   | { kind: 'host'; host: DetectedHost }
-  | { kind: 'provider'; provider: SetupProvider; hasKey: boolean };
+  | { kind: 'provider'; provider: SetupProvider; hasKey: boolean; group: 'cloud' | 'search' };
 
 type Effort = 'low' | 'medium' | 'high' | 'max';
 
@@ -377,6 +380,10 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     Partial<Record<ProviderId, string>>
   >({});
   const resumeSessionsRef = useRef<Partial<Record<ProviderId, string>>>({});
+  // Conversation history for first-party agent multi-turn memory.
+  // Persists across REPL turns, condensed when approaching the
+  // context window limit.
+  const conversationHistoryRef = useRef(new ConversationHistory());
   // Long-lived agent worktree, kept alive across REPL turns. Without
   // this every prompt would spin up a fresh `/tmp/coderouter-XXX/`
   // worktree, which means (a) the model's cwd is different every
@@ -421,13 +428,21 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // "key set" markers stay in sync without a manual refresh.
   const managerRows = useMemo<ManagerRow[]>(() => {
     const apiKeySet = new Set(setupState.apiKeys);
+    const searchKeySet = new Set(setupState.searchKeys);
     const hostRows: ManagerRow[] = setupState.hosts.map((host) => ({ kind: 'host', host }));
     const providerRows: ManagerRow[] = SETUP_PROVIDERS.map((provider) => ({
       kind: 'provider',
       provider,
       hasKey: apiKeySet.has(provider.name),
+      group: 'cloud',
     }));
-    return [...hostRows, ...providerRows];
+    const searchRows: ManagerRow[] = SEARCH_PROVIDERS.map((provider) => ({
+      kind: 'provider',
+      provider,
+      hasKey: searchKeySet.has(provider.name),
+      group: 'search',
+    }));
+    return [...hostRows, ...providerRows, ...searchRows];
   }, [setupState]);
 
   // Keep wizardPick in range when the list shrinks (e.g. host newly
@@ -787,6 +802,22 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         }
       }
     };
+    // Condense conversation history if over threshold. Best-effort:
+    // failures are swallowed and the history just stays un-condensed
+    // (or oldest messages get dropped).
+    try {
+      const history = conversationHistoryRef.current;
+      const contextWindow = 128_000; // conservative default
+      if (history.tokenCount() > contextWindow * 0.75) {
+        const transport = buildCondensationTransport();
+        if (transport) {
+          await history.condense(transport, contextWindow);
+        }
+      }
+    } catch {
+      // Condensation is best-effort.
+    }
+
     try {
       const { report, store } = await executeRun({
         prompt,
@@ -810,6 +841,8 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         // prompt and follow-up questions like "do task 1" hit a
         // pristine tmpdir that has no idea what task 1 is.
         existingWorktree: currentWorktreeRef.current,
+        // Prior conversation messages for multi-turn memory.
+        priorMessages: conversationHistoryRef.current.getMessages(),
         // Signal the mode that this is an interactive REPL session,
         // so it preserves the worktree past the end of the run and
         // hands the (post-snapshot) handle back via
@@ -865,6 +898,13 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       if (report.worktree) {
         currentWorktreeRef.current = report.worktree;
         setCurrentWorktree(report.worktree);
+      }
+
+      // Append this turn's messages to conversation history for
+      // multi-turn memory. Only fires for the first-party agent
+      // adapter which populates `messages`.
+      if (report.messages && report.messages.length > 0) {
+        conversationHistoryRef.current.append(report.messages);
       }
 
       // Surface prompt-injection findings before rendering the answer
@@ -1246,6 +1286,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         return;
       case 'clear':
         setHistory([]);
+        conversationHistoryRef.current.reset();
         return;
       case 'setup':
         startSetupWizard();
@@ -1436,6 +1477,11 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
 
   async function submit(line: string): Promise<void> {
     pushUser(line);
+    // Show a dim hint when images are detected in the prompt.
+    const detectedImgs = detectPromptImages(line, cwd);
+    if (detectedImgs.length > 0) {
+      pushSystem(`  attached ${detectedImgs.length} image${detectedImgs.length > 1 ? 's' : ''}`, 'info');
+    }
     // Once the user types their next reply, the prior question is
     // resolved (regardless of whether the reply explicitly answered
     // it - the model will see it in the resumed conversation either
@@ -2438,7 +2484,10 @@ function SetupManagerPanel({
   // like a single coherent menu.
   const hostRows = rows.filter((r): r is Extract<ManagerRow, { kind: 'host' }> => r.kind === 'host');
   const providerRows = rows.filter(
-    (r): r is Extract<ManagerRow, { kind: 'provider' }> => r.kind === 'provider',
+    (r): r is Extract<ManagerRow, { kind: 'provider' }> => r.kind === 'provider' && r.group === 'cloud',
+  );
+  const searchRows = rows.filter(
+    (r): r is Extract<ManagerRow, { kind: 'provider' }> => r.kind === 'provider' && r.group === 'search',
   );
   const selectedRow = rows[selectedIdx];
 
@@ -2470,7 +2519,7 @@ function SetupManagerPanel({
     >
       <Text bold color="blue">Manage routing sources</Text>
       <Text color="gray">
-        {'  Toggle the local CLIs and add or remove cloud API keys.'}
+        {'  Toggle local CLIs, add cloud API keys, and set optional web-search keys.'}
       </Text>
 
       {hostRows.length > 0 && (
@@ -2514,6 +2563,30 @@ function SetupManagerPanel({
           );
         })}
       </Box>
+
+      {searchRows.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color="gray">{'  WEB SEARCH (optional)'}</Text>
+          <Text color="gray" dimColor>
+            {'    Web search works keyless via DuckDuckGo; add a key for better results.'}
+          </Text>
+          {searchRows.map((row) => {
+            const flatIdx = rows.indexOf(row);
+            const isSel = flatIdx === selectedIdx;
+            const box = row.hasKey ? '[✓]' : '[ ]';
+            return (
+              <Text key={`s-${row.provider.name}`} color={isSel ? 'blue' : undefined} bold={isSel}>
+                {isSel ? '  ▸ ' : '    '}
+                <Text color={row.hasKey ? 'green' : 'gray'}>{box}</Text>
+                {'  '}
+                <Text bold={row.hasKey}>{row.provider.name.padEnd(nameWidth)}</Text>
+                <Text color="gray">{row.provider.label}</Text>
+                {row.hasKey && <Text color="green">{'  key set'}</Text>}
+              </Text>
+            );
+          })}
+        </Box>
+      )}
 
       <Box marginTop={1} flexDirection="column">
         <Text color="blue">{`  ${hintForSelection()}`}</Text>
@@ -3099,6 +3172,38 @@ function renderInline(text: string): React.ReactNode {
   if (nodes.length === 0) return text;
   if (nodes.length === 1) return nodes[0];
   return <Fragment>{nodes}</Fragment>;
+}
+
+/**
+ * Build a lightweight transport for conversation history condensation.
+ * Prefers OpenRouter (cheapest), falls back to OpenAI. Returns null
+ * when no API key is available (condensation will gracefully degrade
+ * to dropping old messages instead).
+ */
+function buildCondensationTransport(): InstanceType<typeof agent.OpenAICompatTransport> | null {
+  const orKey = process.env.OPENROUTER_API_KEY;
+  if (orKey) {
+    return new agent.OpenAICompatTransport({
+      providerName: 'openrouter-condense',
+      model: 'openai/gpt-4.1-mini',
+      baseURL: 'https://openrouter.ai/api/v1',
+      apiKey: orKey,
+      pricePer1MIn: 0.4,
+      pricePer1MOut: 1.6,
+    });
+  }
+  const oaiKey = process.env.OPENAI_API_KEY;
+  if (oaiKey) {
+    return new agent.OpenAICompatTransport({
+      providerName: 'openai-condense',
+      model: 'gpt-4.1-mini',
+      baseURL: 'https://api.openai.com/v1',
+      apiKey: oaiKey,
+      pricePer1MIn: 0.4,
+      pricePer1MOut: 1.6,
+    });
+  }
+  return null;
 }
 
 export async function runInkRepl(opts: AppProps): Promise<void> {

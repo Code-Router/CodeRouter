@@ -10,6 +10,7 @@ function model(
   inPer1M: number,
   outPer1M: number,
   params: string[] = ['tools'],
+  modalities: string[] = [],
 ): OpenRouterModel {
   return {
     id,
@@ -17,19 +18,20 @@ function model(
     context_length: ctx,
     pricing: { prompt: String(inPer1M / 1_000_000), completion: String(outPer1M / 1_000_000) },
     supported_parameters: params,
+    ...(modalities.length > 0 ? { architecture: { input_modalities: modalities } } : {}),
   };
 }
 
 const CATALOG: OpenRouterModel[] = [
-  model('anthropic/claude-opus-4', 200_000, 15, 75),
-  model('anthropic/claude-sonnet-4', 200_000, 3, 15),
-  model('openai/gpt-5', 400_000, 5, 15, ['tools', 'reasoning']),
-  model('openai/gpt-4o', 128_000, 2.5, 10),
-  model('openai/gpt-4o-mini', 128_000, 0.15, 0.6),
-  model('deepseek/deepseek-chat', 128_000, 0.27, 1.1),
-  model('google/gemini-2.5-pro', 1_000_000, 1.25, 10, ['tools', 'reasoning']),
-  model('meta-llama/llama-3.1-8b-instruct:free', 8_000, 0, 0),
-  model('someorg/textonly-2', 32_000, 0.5, 0.5, []), // no tools, unknown family
+  model('anthropic/claude-opus-4', 200_000, 15, 75, ['tools'], ['text', 'image']),
+  model('anthropic/claude-sonnet-4', 200_000, 3, 15, ['tools'], ['text', 'image']),
+  model('openai/gpt-5', 400_000, 5, 15, ['tools', 'reasoning'], ['text', 'image']),
+  model('openai/gpt-4o', 128_000, 2.5, 10, ['tools'], ['text', 'image']),
+  model('openai/gpt-4o-mini', 128_000, 0.15, 0.6, ['tools'], ['text', 'image']),
+  model('deepseek/deepseek-chat', 128_000, 0.27, 1.1, ['tools'], ['text']),
+  model('google/gemini-2.5-pro', 1_000_000, 1.25, 10, ['tools', 'reasoning'], ['text', 'image']),
+  model('meta-llama/llama-3.1-8b-instruct:free', 8_000, 0, 0, ['tools'], ['text']),
+  model('someorg/textonly-2', 32_000, 0.5, 0.5, [], ['text']),
 ];
 
 describe('qualityTier', () => {
@@ -101,5 +103,30 @@ describe('selectSmartModel per-intent behaviour', () => {
 
   it('returns null when the catalog is empty', () => {
     expect(selectSmartModel([], 'balanced-agent')).toBeNull();
+  });
+});
+
+describe('selectSmartModel requireVision', () => {
+  it('excludes non-vision models when requireVision is set', () => {
+    const ranked = selectSmartModels(CATALOG, 'balanced-agent', { requireVision: true });
+    for (const m of ranked) {
+      expect(m.id).not.toBe('deepseek/deepseek-chat');
+      expect(m.id).not.toBe('someorg/textonly-2');
+    }
+  });
+
+  it('keeps vision-capable models when requireVision is set', () => {
+    const ranked = selectSmartModels(CATALOG, 'balanced-agent', { requireVision: true });
+    expect(ranked.length).toBeGreaterThan(0);
+    expect(ranked.find((m) => m.id === 'openai/gpt-4o')).toBeDefined();
+  });
+
+  it('returns null when no vision model qualifies', () => {
+    const textOnly = [
+      model('text/only-a', 128_000, 1, 2, ['tools'], ['text']),
+      model('text/only-b', 64_000, 0.5, 1, [], ['text']),
+    ];
+    const result = selectSmartModel(textOnly, 'balanced-agent', { requireVision: true });
+    expect(result).toBeNull();
   });
 });

@@ -126,7 +126,11 @@ export class ClaudeCodeAdapter extends BaseAdapter {
     staleSession: boolean;
     raw: unknown;
   }> {
-    const args = ['-p', input.prompt, '--output-format', 'stream-json', '--verbose'];
+    let prompt = input.prompt;
+    if (input.images && input.images.length > 0) {
+      prompt += `\n\nAttached image(s):\n${input.images.map((p) => `  ${p}`).join('\n')}`;
+    }
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
     if (this.opts.model) args.push('--model', this.opts.model);
     // Read-only callers (plan / debug / review modes running in the
     // user's real cwd, not a sandbox worktree) keep bypassPermissions

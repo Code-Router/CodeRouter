@@ -48,6 +48,12 @@ export type ResolveIntentOptions = {
    * `memoryBias.forbiddenRoutes`.
    */
   forbidRoutes?: readonly string[];
+  /**
+   * When true, only models with `capabilities.visionInput: true` in the
+   * static catalog (or `isVisionCapable` in the dynamic OpenRouter
+   * catalog) are eligible. Used when the prompt contains images.
+   */
+  requireVision?: boolean;
 };
 
 /**
@@ -84,6 +90,7 @@ export function resolveIntent(
     // ollama: the registry says "ready" when ANY configured model is
     // pulled, but this specific catalog entry's model may not be.
     if (entry.provider === 'ollama' && !isOllamaModelInstalled(entry.model)) return [];
+    if (opts.requireVision && !entry.capabilities?.visionInput) return [];
     const binding = entry.intents.find((b) => b.intent === intent);
     if (!binding) return [];
     let rank = binding.rank;
@@ -139,6 +146,7 @@ export function resolveIntent(
     if (catalog.length > 0) {
       const smart = selectSmartModel(catalog, intent, {
         requireTools: cfg.adapter === 'coderouter_agent',
+        requireVision: opts.requireVision,
       });
       if (smart) {
         model = smart.id;

@@ -1,4 +1,5 @@
 import type { ActivityEvent, Adapter, AskUserQuestionPayload } from '../adapters/types.js';
+import type { ChatMessage } from '../agent/transport/types.js';
 import type { Clarification } from '../clarify/types.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { RouterContext } from '../router/policy.js';
@@ -40,6 +41,8 @@ export type ModeInput = {
    * esc-to-interrupt key to this.
    */
   signal?: AbortSignal;
+  /** Absolute paths to image files detected in the user's prompt. */
+  images?: string[];
   /**
    * Optional streaming sink: every chunk the underlying adapter emits
    * is forwarded here so the REPL can render the response live.
@@ -88,6 +91,12 @@ export type ModeInput = {
    * conversation rather than failing.
    */
   resumeSessions?: Partial<Record<RouteRef['provider'], string>>;
+  /**
+   * Prior conversation messages from earlier REPL turns for
+   * first-party agent multi-turn memory. Passed through to the
+   * adapter as-is; shell-based adapters ignore it.
+   */
+  priorMessages?: ChatMessage[];
   /**
    * Optional callback fired when the underlying adapter detects a
    * Claude Code `AskUserQuestion` tool call. Forwarded straight to
@@ -230,6 +239,12 @@ export type ModeOutput = {
    * input's baseSha.
    */
   worktree?: WorktreeHandle;
+  /**
+   * Full message history from this turn (system excluded). The REPL
+   * appends these to ConversationHistory for first-party agent
+   * multi-turn memory. Only populated by the coderouter_agent adapter.
+   */
+  messages?: ChatMessage[];
 };
 
 export type ModeContext = {

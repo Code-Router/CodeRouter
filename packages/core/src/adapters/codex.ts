@@ -147,7 +147,16 @@ export class CodexAdapter extends BaseAdapter {
     // releases, so we use it unconditionally.
     args.push('-c', `approval_policy="${approval}"`);
     if (this.opts.extraArgs) args.push(...this.opts.extraArgs);
-    args.push('--', input.prompt);
+    // Pass image files via `-i` flags. If the flag is not supported by
+    // the installed codex version, the image paths are appended to the
+    // prompt text as a fallback.
+    let prompt = input.prompt;
+    if (input.images && input.images.length > 0) {
+      for (const img of input.images) {
+        args.push('-i', img);
+      }
+    }
+    args.push('--', prompt);
 
     const parser = new CodexJsonStream({
       onChunk: input.onChunk,

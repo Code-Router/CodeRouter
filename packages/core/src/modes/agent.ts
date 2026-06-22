@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ClassifierCascade, loadSeedCorpus } from '../classify/index.js';
 import { scanContext } from '../context/scan.js';
+import { detectPromptImages } from '../context/images.js';
 import { fastClassification } from '../router/fast.js';
 import { matchInstant } from '../router/instant.js';
 import { pick } from '../router/policy.js';
@@ -89,9 +90,25 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       ? instant.classification
       : await classifier.classify({ prompt: input.prompt, noLlm: !ctx.budget });
 
+  // Detect image file paths referenced in the prompt.
+  const detectedImages = detectPromptImages(input.prompt, input.cwd);
+  const images = [...detectedImages, ...(input.images ?? [])];
+  const requiresVision = images.length > 0;
+
   const route = input.route
     ? parseRoute(input.route)
-    : pick(classification, ctx.router, { effort });
+    : pick(classification, ctx.router, { effort, requiresVision });
+
+  // If vision was required but no vision model is available, warn and
+  // proceed text-only rather than failing outright.
+  if (requiresVision && route.model === 'no-vision-model') {
+    progress({
+      phase: 'agent/route',
+      stage: 'done',
+      data: { warning: 'no vision-capable model is enabled; running text-only — enable one in /setup' },
+    });
+    images.length = 0; // clear so we don't try to attach
+  }
 
   const adapter: Adapter = ctx.resolveAdapter
     ? ctx.resolveAdapter(route)
@@ -196,10 +213,12 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
     res = await adapter.run({
       prompt: input.prompt,
       cwd: wt.path,
+      images: images.length > 0 ? images : undefined,
       reasoningEffort: profile.reasoningEffort,
       contextManifest: manifest,
       signal: input.signal,
       resumeSessionId,
+      priorMessages: input.priorMessages,
       onChunk: input.onChunk,
       onActivity: input.onActivity,
       onUsage: input.onUsage,
@@ -444,6 +463,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
     sessionId: res.sessionId,
     sessionProvider: res.sessionId ? route.provider : undefined,
     worktree: outgoingWorktree,
+    messages: res.messages,
   };
 }
 

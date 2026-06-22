@@ -28,6 +28,17 @@ export const SETUP_PROVIDERS: readonly SetupProvider[] = [
   { name: 'groq',       envVar: 'GROQ_API_KEY',       label: 'Groq',               example: 'gsk_...' },
 ];
 
+/**
+ * Optional web-search API keys. These power the `web_search` tool and
+ * Masterplan research with higher-quality results than the keyless
+ * DuckDuckGo fallback. They are NOT required to run CodeRouter, so they
+ * never count toward "configured" - they're a pure enhancement.
+ */
+export const SEARCH_PROVIDERS: readonly SetupProvider[] = [
+  { name: 'tavily', envVar: 'TAVILY_API_KEY', label: 'Tavily',       example: 'tvly-...' },
+  { name: 'brave',  envVar: 'BRAVE_API_KEY',  label: 'Brave Search', example: 'BSA...' },
+];
+
 export const CREDENTIALS_PATH = join(homedir(), '.coderouter', 'credentials.json');
 
 type CredentialsFile = {
@@ -82,7 +93,7 @@ export function loadCredentialsIntoEnv(): { applied: string[] } {
   } catch {
     return { applied };
   }
-  for (const p of SETUP_PROVIDERS) {
+  for (const p of [...SETUP_PROVIDERS, ...SEARCH_PROVIDERS]) {
     if (process.env[p.envVar]) continue;
     const key = parsed.providers?.[p.name]?.apiKey;
     if (key) {
@@ -304,6 +315,8 @@ export function setPreferredModel(tier: 'strong' | 'cheap', value: PreferredMode
 export type DetectedSetup = {
   configured: boolean;
   apiKeys: string[];
+  /** Names of web-search providers (tavily/brave) with a key present. */
+  searchKeys: string[];
   hosts: DetectedHost[];
 };
 
@@ -312,14 +325,20 @@ export function detectConfiguredProviders(): DetectedSetup {
   for (const p of SETUP_PROVIDERS) {
     if (process.env[p.envVar]) apiKeys.push(p.name);
   }
+  const searchKeys: string[] = [];
+  for (const p of SEARCH_PROVIDERS) {
+    if (process.env[p.envVar]) searchKeys.push(p.name);
+  }
   const hosts = detectHosts();
   // Only *enabled* hosts count toward "configured" - if the user has
   // disabled every host and has no API keys, we still want the setup
-  // wizard to fire on next launch.
+  // wizard to fire on next launch. Search keys are optional and never
+  // count toward "configured".
   const enabledHostCount = hosts.filter((h) => h.enabled).length;
   return {
     configured: apiKeys.length + enabledHostCount > 0,
     apiKeys,
+    searchKeys,
     hosts,
   };
 }

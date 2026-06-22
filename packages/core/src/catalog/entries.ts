@@ -41,7 +41,7 @@ export const CATALOG: Catalog = [
   {
     provider: 'claude_code',
     model: 'sonnet',
-    capabilities: { tooluse: true },
+    capabilities: { tooluse: true, visionInput: true },
     intents: [
       { intent: 'balanced-agent', rank: 1 },
       { intent: 'multi-file', rank: 2 },
@@ -50,7 +50,7 @@ export const CATALOG: Catalog = [
   {
     provider: 'claude_code',
     model: 'opus',
-    capabilities: { tooluse: true },
+    capabilities: { tooluse: true, visionInput: true },
     intents: [
       { intent: 'multi-file', rank: 1 },
       { intent: 'deep-reasoning', rank: 3 },
@@ -82,7 +82,7 @@ export const CATALOG: Catalog = [
     contextWindow: 400_000,
     pricePer1MIn: 5,
     pricePer1MOut: 15,
-    capabilities: { reasoning: true, tooluse: true },
+    capabilities: { reasoning: true, tooluse: true, visionInput: true },
     intents: [
       { intent: 'deep-reasoning', rank: 2 },
       { intent: 'balanced-agent', rank: 3 },
@@ -92,7 +92,7 @@ export const CATALOG: Catalog = [
     provider: 'openai',
     model: 'gpt-5.5',
     contextWindow: 400_000,
-    capabilities: { reasoning: true, tooluse: true },
+    capabilities: { reasoning: true, tooluse: true, visionInput: true },
     intents: [
       { intent: 'deep-reasoning', rank: 2 },
       { intent: 'balanced-agent', rank: 3 },
@@ -102,7 +102,7 @@ export const CATALOG: Catalog = [
     provider: 'openai',
     model: 'gpt-5-mini',
     contextWindow: 400_000,
-    capabilities: { tooluse: true },
+    capabilities: { tooluse: true, visionInput: true },
     intents: [
       { intent: 'balanced-agent', rank: 4 },
       { intent: 'fast-cheap', rank: 2 },
@@ -112,7 +112,7 @@ export const CATALOG: Catalog = [
     provider: 'openai',
     model: 'gpt-4.1',
     contextWindow: 1_000_000,
-    capabilities: { longContext: true, tooluse: true },
+    capabilities: { longContext: true, tooluse: true, visionInput: true },
     intents: [
       { intent: 'huge-context', rank: 2 },
       { intent: 'balanced-agent', rank: 4 },
@@ -124,7 +124,7 @@ export const CATALOG: Catalog = [
     contextWindow: 128_000,
     pricePer1MIn: 0.15,
     pricePer1MOut: 0.6,
-    capabilities: { tooluse: true },
+    capabilities: { tooluse: true, visionInput: true },
     intents: [{ intent: 'fast-cheap', rank: 1 }],
   },
 
@@ -137,7 +137,7 @@ export const CATALOG: Catalog = [
     contextWindow: 200_000,
     pricePer1MIn: 15,
     pricePer1MOut: 75,
-    capabilities: { tooluse: true },
+    capabilities: { tooluse: true, visionInput: true },
     intents: [
       { intent: 'multi-file', rank: 1 },
       { intent: 'deep-reasoning', rank: 3 },
@@ -149,7 +149,7 @@ export const CATALOG: Catalog = [
     contextWindow: 200_000,
     pricePer1MIn: 3,
     pricePer1MOut: 15,
-    capabilities: { tooluse: true },
+    capabilities: { tooluse: true, visionInput: true },
     intents: [
       { intent: 'balanced-agent', rank: 1 },
       { intent: 'multi-file', rank: 3 },
@@ -161,7 +161,7 @@ export const CATALOG: Catalog = [
     contextWindow: 200_000,
     pricePer1MIn: 0.8,
     pricePer1MOut: 4,
-    capabilities: { tooluse: true },
+    capabilities: { tooluse: true, visionInput: true },
     intents: [{ intent: 'fast-cheap', rank: 2 }],
   },
 
@@ -186,7 +186,7 @@ export const CATALOG: Catalog = [
     contextWindow: 1_000_000,
     pricePer1MIn: 0.075,
     pricePer1MOut: 0.3,
-    capabilities: { longContext: true, tooluse: true },
+    capabilities: { longContext: true, tooluse: true, visionInput: true },
     intents: [
       { intent: 'fast-cheap', rank: 3 },
       { intent: 'huge-context', rank: 3 },

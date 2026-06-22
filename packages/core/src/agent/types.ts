@@ -14,7 +14,7 @@
  */
 
 import type { ActivityEvent, AskUserQuestionPayload } from '../adapters/types.js';
-import type { ChatTransport } from './transport/types.js';
+import type { ChatMessage, ChatTransport } from './transport/types.js';
 
 // ----- tool layer -------------------------------------------------------
 
@@ -114,6 +114,12 @@ export type AgentRunInput = {
   onUsage?: (u: AgentUsage) => void;
   onUserQuestion?: (payload: AskUserQuestionPayload) => void;
 
+  /** Prior conversation messages to prepend (after system, before this turn's user prompt). */
+  priorMessages?: ChatMessage[];
+
+  /** Absolute paths to image files to include in the user message as vision content. */
+  images?: string[];
+
   /** Optional budget overrides; defaults are conservative. */
   budget?: Partial<AgentBudget>;
 
@@ -130,6 +136,8 @@ export type AgentRunResult = {
   iterations: number;
   /** Why the loop exited - useful for telemetry. */
   finishReason: 'done' | 'iteration-cap' | 'duration-cap' | 'aborted' | 'user-question';
+  /** Full message history from this turn (system excluded) for conversation persistence. */
+  messages: ChatMessage[];
 };
 
 // ----- transport (re-exported) -----------------------------------------

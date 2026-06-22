@@ -15,6 +15,7 @@ import type { Intent } from '../../catalog/types.js';
 import {
   type OpenRouterModel,
   isToolCapable,
+  isVisionCapable,
   pricePer1MIn,
   pricePer1MOut,
 } from '../../agent/providers/openrouter.js';
@@ -23,6 +24,8 @@ import { explain, scoreFor, type ScoreInput } from './score.js';
 export type SmartConstraints = {
   /** Require tool-calling (agent / editing intents). Default false. */
   requireTools?: boolean;
+  /** Require vision/image input capability. Default false. */
+  requireVision?: boolean;
   /** Minimum context window in tokens. Default 0. */
   minContextWindow?: number;
   /** Hard price ceilings (USD per 1M). Undefined = no ceiling. */
@@ -68,6 +71,7 @@ function toScoreInput(m: OpenRouterModel): ScoreInput {
 
 function eligible(m: OpenRouterModel, c: SmartConstraints): boolean {
   if (c.requireTools && !isToolCapable(m)) return false;
+  if (c.requireVision && !isVisionCapable(m)) return false;
   const inP = pricePer1MIn(m);
   const outP = pricePer1MOut(m);
   if (!c.allowFree && inP === 0 && outP === 0) return false;

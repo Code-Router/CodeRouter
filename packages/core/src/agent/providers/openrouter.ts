@@ -170,6 +170,14 @@ const KNOWN_TOOL_FAMILIES = [
   'cohere/command',
 ];
 
+/**
+ * Whether the model advertises image input capability via
+ * OpenRouter's `architecture.input_modalities` array.
+ */
+export function isVisionCapable(m: OpenRouterModel): boolean {
+  return m.architecture?.input_modalities?.includes('image') === true;
+}
+
 /** USD per million prompt tokens, computed from OpenRouter's per-token string price. */
 export function pricePer1MIn(m: OpenRouterModel): number {
   return safePrice(m.pricing?.prompt) * 1_000_000;

@@ -20,19 +20,37 @@
  *   - `budget`        tweak per-route caps
  */
 
-import type { ChatMessage, ToolCall } from '../transport/types.js';
+import type { ChatMessage, ContentBlock, ToolCall } from '../transport/types.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../systemPrompt.js';
 import type { AgentRunInput, AgentRunResult, AgentUsage, Tool } from '../types.js';
 import { checkBudget, resolveBudget } from './budget.js';
+import { imageToDataUrl } from '../../context/images.js';
 
 export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
   const startMs = performance.now();
   const budget = resolveBudget(input.budget);
 
   const systemPrompt = input.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+
+  // Build the user message — multimodal when images are present.
+  let userMessage: ChatMessage;
+  if (input.images && input.images.length > 0) {
+    const blocks: ContentBlock[] = [{ type: 'text', text: input.prompt }];
+    for (const imgPath of input.images) {
+      const dataUrl = imageToDataUrl(imgPath);
+      if (dataUrl) {
+        blocks.push({ type: 'image_url', image_url: { url: dataUrl } });
+      }
+    }
+    userMessage = { role: 'user', content: blocks };
+  } else {
+    userMessage = { role: 'user', content: input.prompt };
+  }
+
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: input.prompt },
+    ...(input.priorMessages ?? []),
+    userMessage,
   ];
 
   const wireTools = input.tools.map((t) => ({
@@ -132,6 +150,7 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
     durationMs: performance.now() - startMs,
     iterations,
     finishReason,
+    messages: messages.filter((m) => m.role !== 'system'),
   };
 }
 

@@ -1,3 +1,4 @@
+import type { ChatMessage } from '../agent/transport/types.js';
 import type { WorktreeHandle } from '../modes/types.js';
 import type { InjectionFinding } from '../security/injection.js';
 import type {
@@ -93,4 +94,10 @@ export type Report = {
    * (plan / debug / review).
    */
   worktree?: WorktreeHandle;
+  /**
+   * Full message history from this turn (system excluded). The REPL
+   * appends these to ConversationHistory for first-party agent
+   * multi-turn memory. Only populated by the coderouter_agent adapter.
+   */
+  messages?: ChatMessage[];
 };

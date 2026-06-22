@@ -35,5 +35,6 @@ export function buildReport(prompt: string, out: ModeOutput): Report {
     sessionId: out.sessionId,
     sessionProvider: out.sessionProvider,
     worktree: out.worktree,
+    messages: out.messages,
   };
 }

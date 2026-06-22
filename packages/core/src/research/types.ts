@@ -1,4 +1,4 @@
-export type ResearchProviderId = 'tavily' | 'brave' | 'github' | 'docs';
+export type ResearchProviderId = 'tavily' | 'brave' | 'duckduckgo' | 'github' | 'docs';
 
 export type ResearchQuery = {
   query: string;

@@ -18,6 +18,7 @@ import { grepTool } from './grep.js';
 import { listDirTool } from './listDir.js';
 import { multiEditTool } from './multiEdit.js';
 import { readFileTool } from './readFile.js';
+import { webSearchTool } from './webSearch.js';
 import { writeFileTool } from './writeFile.js';
 
 /**
@@ -31,6 +32,7 @@ export function defaultTools(): Tool[] {
     globTool,
     grepTool,
     listDirTool,
+    webSearchTool,
     writeFileTool,
     editFileTool,
     multiEditTool,
@@ -58,5 +60,6 @@ export {
   listDirTool,
   multiEditTool,
   readFileTool,
+  webSearchTool,
   writeFileTool,
 };

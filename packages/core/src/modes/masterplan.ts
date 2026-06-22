@@ -6,6 +6,7 @@ import { loadProjectMemory } from '../memory/projectMemory.js';
 import {
   BraveProvider,
   DocsProvider,
+  DuckDuckGoProvider,
   GitHubProvider,
   TavilyProvider,
 } from '../research/providers/index.js';
@@ -63,8 +64,17 @@ export async function runMasterplanMode(
 
   // Phase 3: external evidence
   progress({ phase: 'masterplan/phase3', stage: 'start', index: 3, total: 6, message: 'external research' });
+  // DuckDuckGo is keyless so masterplan research works with zero setup;
+  // Tavily/Brave still run when a key is configured (better snippets)
+  // and simply return [] otherwise.
   const providers: ResearchProvider[] = profile.preferMasterplanResearch
-    ? [new TavilyProvider(), new BraveProvider(), new GitHubProvider(), new DocsProvider()]
+    ? [
+        new TavilyProvider(),
+        new BraveProvider(),
+        new DuckDuckGoProvider(),
+        new GitHubProvider(),
+        new DocsProvider(),
+      ]
     : [];
   const hits = await Promise.all(
     providers.map((p) => p.search({ query: input.prompt, limit: 5 }).catch(() => [] as ResearchHit[])),

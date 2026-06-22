@@ -117,6 +117,8 @@ export class CodeRouterAgentAdapter extends BaseAdapter {
       signal: input.signal,
       tools: this.tools,
       transport,
+      priorMessages: input.priorMessages,
+      images: input.images,
       reasoningEffort: input.reasoningEffort,
       onChunk: input.onChunk,
       onReasoning: input.onActivity
@@ -138,6 +140,7 @@ export class CodeRouterAgentAdapter extends BaseAdapter {
       tokensOut: result.tokensOut,
       costUsd: result.costUsd,
       durationMs: result.durationMs,
+      messages: result.messages,
     };
   }
 }

@@ -110,6 +110,12 @@ export type CliRunOpts = {
    * one-shot invocations.
    */
   keepWorktree?: boolean;
+  /**
+   * Prior conversation messages from earlier REPL turns for
+   * first-party agent multi-turn memory. Passed through to the
+   * mode -> adapter -> agent loop.
+   */
+  priorMessages?: import('@coderouter/core').ChatMessage[];
 };
 
 /**
@@ -159,6 +165,7 @@ export async function executeRun(opts: CliRunOpts): Promise<{
         onUserQuestion: opts.onUserQuestion,
         existingWorktree: opts.existingWorktree,
         keepWorktree: opts.keepWorktree,
+        priorMessages: opts.priorMessages,
       },
       {
         registry,

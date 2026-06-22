@@ -13,9 +13,14 @@
 
 import type { JsonSchema } from '../types.js';
 
+/** Individual content block for multimodal user messages. */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export type ChatMessage =
   | { role: 'system'; content: string }
-  | { role: 'user'; content: string }
+  | { role: 'user'; content: string | ContentBlock[] }
   | {
       role: 'assistant';
       content: string | null;

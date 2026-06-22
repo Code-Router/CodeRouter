@@ -23,6 +23,7 @@ import {
   listDirTool,
   multiEditTool,
   readFileTool,
+  webSearchTool,
   withTool,
   withoutTool,
   writeFileTool,
@@ -49,6 +50,7 @@ describe('default tool registry', () => {
       'glob',
       'grep',
       'list_dir',
+      'web_search',
       'write_file',
       'edit_file',
       'multi_edit',
@@ -63,6 +65,14 @@ describe('default tool registry', () => {
   });
   it('withoutTool drops by name', () => {
     expect(withoutTool(defaultTools(), 'bash').map((t) => t.name)).not.toContain('bash');
+  });
+});
+
+describe('web_search', () => {
+  it('describe summarizes the query', () => {
+    expect(webSearchTool.describe({ query: 'react server components' })).toMatch(
+      /Searched the web/,
+    );
   });
 });
 

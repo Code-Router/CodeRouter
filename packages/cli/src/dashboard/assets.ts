@@ -78,6 +78,7 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; }
 
 .section { margin-bottom: 34px; }
 .section-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 14px; }
+.section-sub { font-size: 12px; color: var(--muted); margin: -8px 0 14px; }
 
 /* Stat cards */
 .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
@@ -465,11 +466,19 @@ function renderSettings() {
   const hosts = settings.hosts.length
     ? '<div class="panel">' + settings.hosts.map(hostRow).join('') + '</div>'
     : '<div class="empty">No local CLIs detected on PATH (codex, claude, ollama).</div>';
+  const searchProviders = settings.searchProviders || [];
+  const searchSection = searchProviders.length
+    ? '<div class="section"><div class="section-title">Web search</div>' +
+        '<div class="section-sub">Optional. Web search works keyless via DuckDuckGo; add a key for higher-quality results.</div>' +
+        '<div class="panel">' + searchProviders.map(providerRow).join('') + '</div>' +
+      '</div>'
+    : '';
   main.innerHTML =
     '<div class="page-head"><h1>Settings</h1></div>' +
     '<div class="section"><div class="section-title">API providers</div>' +
       '<div class="panel">' + settings.providers.map(providerRow).join('') + '</div>' +
     '</div>' +
+    searchSection +
     '<div class="section"><div class="section-title">Local CLIs</div>' + hosts + '</div>' +
     '<div class="section"><div class="section-title">Locations</div>' +
       '<div class="panel"><div class="setting-row"><div class="meta"><div class="title">Credentials</div><div class="key">' + esc(settings.paths.credentials) + '</div></div></div>' +

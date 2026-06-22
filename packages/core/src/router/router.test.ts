@@ -238,6 +238,40 @@ describe('pick()', () => {
     );
     expect(r.model).not.toBe('claude-opus-4-5');
   });
+
+  it('honors a memoryBias preferred route when its provider is ready', () => {
+    envSetup();
+    const ctx = {
+      registry: new ProviderRegistry(defaultProviders()),
+      memoryBias: {
+        preferredRoutes: [
+          { route: 'anthropic,claude-sonnet-4-5', reason: '90% success across 5 runs' },
+        ],
+      },
+    };
+    const r = pick(classification({ taskType: 'feature' }), ctx);
+    expect(r.model).toBe('claude-sonnet-4-5');
+    expect(r.rationale).toContain('memory:');
+  });
+
+  it('skips a memoryBias preferred route whose provider was disabled', () => {
+    // Regression: a provider with a strong historical success rate
+    // (e.g. claude_code) must NOT be picked once the user disables it.
+    // envSetup() blanks PATH so claude_code's binary check fails ->
+    // isReady('claude_code') is false, mirroring a /setup toggle-off.
+    envSetup();
+    const ctx = {
+      registry: new ProviderRegistry(defaultProviders()),
+      memoryBias: {
+        preferredRoutes: [
+          { route: 'claude_code,sonnet', reason: '100% success across 4 runs' },
+        ],
+      },
+    };
+    const r = pick(classification({ taskType: 'feature' }), ctx);
+    expect(r.provider).not.toBe('claude_code');
+    expect(r.rationale).not.toContain('memory:');
+  });
 });
 
 describe('pickStrong()', () => {
@@ -263,5 +297,57 @@ describe('pickStrong()', () => {
     expect(top.length).toBeLessThanOrEqual(3);
     const models = top.map((r) => r.model);
     expect(models).toContain('gpt-5');
+  });
+});
+
+describe('pick with requiresVision', () => {
+  it('returns a vision-capable model when requiresVision is set', () => {
+    envSetup();
+    const ctx = { registry: new ProviderRegistry(defaultProviders()) };
+    const route = pick(
+      classification({ taskType: 'feature' }),
+      ctx,
+      { requiresVision: true },
+    );
+    // Should pick a model that has visionInput in the static catalog
+    // (openai, anthropic, or google all have it)
+    expect(route.model).not.toBe('no-vision-model');
+    expect(route.rationale).toMatch(/vision/);
+  });
+
+  it('returns no-vision-model sentinel when no vision provider is ready', () => {
+    // No API keys set, no CLIs on PATH -> nothing is ready
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.PATH = '';
+    const ctx = { registry: new ProviderRegistry(defaultProviders()) };
+    const route = pick(
+      classification({ taskType: 'feature' }),
+      ctx,
+      { requiresVision: true },
+    );
+    expect(route.model).toBe('no-vision-model');
+  });
+
+  it('bypasses memory-biased non-vision routes when requiresVision is set', () => {
+    envSetup();
+    const ctx = {
+      registry: new ProviderRegistry(defaultProviders()),
+      memoryBias: {
+        preferredRoutes: [{ route: 'deepseek,deepseek-chat', reason: 'cheap' }],
+      },
+    };
+    const route = pick(
+      classification({ taskType: 'feature' }),
+      ctx,
+      { requiresVision: true },
+    );
+    // DeepSeek doesn't have visionInput in the catalog, so it should be skipped
+    expect(route.provider).not.toBe('deepseek');
+    expect(route.rationale).toMatch(/vision/);
   });
 });

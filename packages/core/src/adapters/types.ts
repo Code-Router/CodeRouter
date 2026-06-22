@@ -61,6 +61,8 @@ export type AdapterCallInput = {
   prompt: string;
   systemPrompt?: string;
   cwd?: string;
+  /** Absolute paths to image files for vision-capable models. */
+  images?: string[];
   /**
    * Read-only invocation: the adapter must not let the model write
    * files or run mutating commands. Local-CLI adapters map this to
@@ -125,6 +127,14 @@ export type AdapterCallInput = {
    */
   resumeSessionId?: string;
   /**
+   * Prior conversation messages from earlier REPL turns. The
+   * first-party agent injects these between the system prompt and
+   * the current user prompt so the model has multi-turn awareness.
+   * Shell-based adapters (Claude Code, Codex) ignore this and rely
+   * on their own session mechanism (`resumeSessionId`).
+   */
+  priorMessages?: import('../agent/transport/types.js').ChatMessage[];
+  /**
    * Optional callback fired the moment the model invokes a built-in
    * "ask the user a clarifying question" tool (Claude Code's
    * `AskUserQuestion`). The headless `claude -p` subprocess can't
@@ -180,6 +190,12 @@ export type AdapterCallResult = {
    * produced it.
    */
   sessionId?: string;
+  /**
+   * Full message history from this turn (system excluded). The REPL
+   * appends these to ConversationHistory for multi-turn awareness.
+   * Only set by the first-party agent adapter.
+   */
+  messages?: import('../agent/transport/types.js').ChatMessage[];
 };
 
 export type Adapter = {

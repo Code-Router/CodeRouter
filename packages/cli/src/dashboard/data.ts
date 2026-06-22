@@ -23,6 +23,7 @@ import {
 import type { RunRecord } from '@coderouter/core/store';
 import {
   CREDENTIALS_PATH,
+  SEARCH_PROVIDERS,
   SETUP_PROVIDERS,
   getPreferredModels,
   getSpendingLimit,
@@ -125,6 +126,8 @@ export type AvailableModel = {
 
 export type SettingsReport = {
   providers: ProviderSetting[];
+  /** Optional web-search API keys (Tavily/Brave). Not required to run. */
+  searchProviders: ProviderSetting[];
   hosts: HostSetting[];
   limits: { monthlyUsd: number | null };
   preferredModels: {
@@ -197,6 +200,7 @@ export async function buildUsageReport(cwd: string): Promise<UsageReport> {
 export function buildSettingsReport(cwd: string): SettingsReport {
   const file = readCredentialsFile();
   const providers: ProviderSetting[] = SETUP_PROVIDERS.map((p) => describeProvider(p, file));
+  const searchProviders: ProviderSetting[] = SEARCH_PROVIDERS.map((p) => describeProvider(p, file));
   const hosts: HostSetting[] = detectHosts().map((h) => ({
     provider: h.provider,
     label: h.label,
@@ -207,6 +211,7 @@ export function buildSettingsReport(cwd: string): SettingsReport {
   }));
   return {
     providers,
+    searchProviders,
     hosts,
     limits: getSpendingLimit(),
     preferredModels: getPreferredModels(),

@@ -16,6 +16,7 @@ import {
   setHostEnabled,
   setPreferredModel,
   setSpendingLimit,
+  SEARCH_PROVIDERS,
   SETUP_PROVIDERS,
 } from '../ui/setup.js';
 import type { HostProvider } from '../ui/hosts.js';
@@ -115,7 +116,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): P
     const body = await readJson(req);
 
     if (path === '/api/settings/key' && method === 'POST') {
-      const provider = SETUP_PROVIDERS.find((p) => p.name === body.name);
+      const provider = findCredentialProvider(body.name);
       if (!provider) return sendJson(res, 400, { error: `unknown provider: ${body.name}` });
       if (typeof body.apiKey !== 'string' || !body.apiKey.trim())
         return sendJson(res, 400, { error: 'apiKey required' });
@@ -124,7 +125,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): P
     }
 
     if (path === '/api/settings/key' && method === 'DELETE') {
-      const provider = SETUP_PROVIDERS.find((p) => p.name === body.name);
+      const provider = findCredentialProvider(body.name);
       if (!provider) return sendJson(res, 400, { error: `unknown provider: ${body.name}` });
       const out = removeCredential(provider);
       return sendJson(res, 200, { ok: true, ...out });
@@ -163,6 +164,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): P
   }
 
   sendJson(res, 404, { error: 'not found' });
+}
+
+/** Look up a provider by name across cloud + web-search credential lists. */
+function findCredentialProvider(name: unknown) {
+  return [...SETUP_PROVIDERS, ...SEARCH_PROVIDERS].find((p) => p.name === name);
 }
 
 /**
