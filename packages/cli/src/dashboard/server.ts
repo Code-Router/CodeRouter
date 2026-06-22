@@ -107,7 +107,7 @@ function listen(server: Server, host: string, preferred: number): Promise<number
   });
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): Promise<void> {
+export async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): Promise<void> {
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://localhost');
   const path = url.pathname;
@@ -425,7 +425,7 @@ async function handlePluginMutation(
  * or an Origin whose host is loopback. Rejects a foreign site POSTing to
  * our port behind the user's back.
  */
-function sameOrigin(req: IncomingMessage): boolean {
+export function sameOrigin(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;
   try {
@@ -436,7 +436,7 @@ function sameOrigin(req: IncomingMessage): boolean {
   }
 }
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+export async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
@@ -452,7 +452,7 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   }
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',

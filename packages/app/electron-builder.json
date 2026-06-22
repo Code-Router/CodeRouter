@@ -1,0 +1,9 @@
+{
+  "appId": "dev.coderouter.studio",
+  "productName": "CodeRouter Studio",
+  "files": ["dist/**/*", "dist-electron/**/*"],
+  "directories": { "output": "release" },
+  "mac": { "category": "public.app-category.developer-tools", "target": ["dmg"] },
+  "linux": { "target": ["AppImage"], "category": "Development" },
+  "win": { "target": ["nsis"] }
+}

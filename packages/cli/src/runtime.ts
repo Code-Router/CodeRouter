@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   buildReport,
   computeQualityBias,
@@ -21,6 +22,7 @@ import type {
   ProviderConfig,
   ProviderId,
   RouteRef,
+  RouterContext,
   Store,
   WorktreeHandle,
 } from '@coderouter/core';
@@ -122,6 +124,39 @@ export type CliRunOpts = {
 };
 
 /**
+ * Build the registry + router context + store for a project cwd. This is
+ * the shared wiring behind both one-shot runs and the daemon's loop
+ * supervisor, so loops route through exactly the same memory/quality
+ * bias and preferred-model logic as interactive runs.
+ */
+export async function buildExecutionEnv(cwd: string): Promise<{
+  registry: ProviderRegistry;
+  router: RouterContext;
+  store: Store;
+}> {
+  const { config } = await loadConfig(cwd);
+  const providers = mergeProviders(config.providers as ProviderConfig[] | undefined);
+  const registry = new ProviderRegistry(providers);
+  if (process.env.OPENROUTER_API_KEY) {
+    await registry.loadOpenRouterCatalog().catch(() => undefined);
+  }
+  const store = await openStore(resolveDbPath(cwd));
+  registerProject(cwd);
+  const bias = deriveMemoryBias(store, { taskType: 'feature' });
+  const qualityBias = computeQualityBias(observationsFromRuns(store.runs.list(500)));
+  return {
+    registry,
+    store,
+    router: {
+      registry,
+      memoryBias: bias,
+      preferredModels: resolvePreferredModels(registry),
+      qualityBias,
+    },
+  };
+}
+
+/**
  * Shared execution path used by `coderouter run`, mode aliases, and the
  * REPL. Owns construction of the registry, the store, and the progress
  * adapter, and serializes the final report.
@@ -131,27 +166,10 @@ export async function executeRun(opts: CliRunOpts): Promise<{
   output: ModeOutput;
   store: Store;
 }> {
-  const { config } = await loadConfig(opts.cwd);
-  const providers = mergeProviders(config.providers as ProviderConfig[] | undefined);
-  const registry = new ProviderRegistry(providers);
-  // Best-effort preload of the OpenRouter `/v1/models` catalog so a
-  // user with only an OpenRouter key can route to ANY tool-capable
-  // model on the platform - not just the curated handful we ship
-  // statically. Cached on disk (24h TTL) so subsequent runs don't
-  // pay the network cost. Failures are ignored: we still resolve
-  // statically-declared models when the network is unavailable.
-  if (process.env.OPENROUTER_API_KEY) {
-    await registry.loadOpenRouterCatalog().catch(() => undefined);
-  }
-  const store = await openStore(resolveDbPath(opts.cwd));
-  // Track this repo machine-wide so the dashboard can aggregate usage
-  // across every CodeRouter project on this computer.
-  registerProject(opts.cwd);
-  const bias = deriveMemoryBias(store, { taskType: 'feature' });
-  // Hybrid refinement: blend benchmark priors with how each model has
-  // actually performed on this user's repos (bounded + shrinkage so it
-  // nudges near-ties without overturning the priors).
-  const qualityBias = computeQualityBias(observationsFromRuns(store.runs.list(500)));
+  const { registry, router, store } = await buildExecutionEnv(opts.cwd);
+  // Stable conversation id: the REPL passes one per session so turns
+  // group into a single browsable chat; one-shot runs get a fresh id.
+  const sessionId = opts.sessionId ?? randomUUID();
   const { notifier, close } = opts.progress ?? spinnerProgress();
 
   try {
@@ -161,7 +179,7 @@ export async function executeRun(opts: CliRunOpts): Promise<{
         prompt: opts.prompt,
         cwd: opts.cwd,
         effort: opts.effort,
-        sessionId: opts.sessionId,
+        sessionId,
         fast: opts.fast,
         apply: opts.apply,
         route: opts.route,
@@ -179,21 +197,65 @@ export async function executeRun(opts: CliRunOpts): Promise<{
       },
       {
         registry,
-        router: {
-          registry,
-          memoryBias: bias,
-          preferredModels: resolvePreferredModels(registry),
-          qualityBias,
-        },
+        router,
         store,
       },
     );
     const report = buildReport(opts.prompt, output);
-    persistRun(store, opts, output, report);
+    persistRun(store, { ...opts, sessionId }, output, report);
+    persistChat(store, { ...opts, sessionId }, output);
     return { report, output, store };
   } finally {
     close();
   }
+}
+
+/**
+ * Persist the conversation turn (user prompt + assistant response text)
+ * so the desktop app can browse every chat. Best-effort: never fails a
+ * run. The model's natural-language output isn't stored anywhere else —
+ * runs only carry metadata — so this is the source of truth for chat
+ * history.
+ */
+function persistChat(store: Store, opts: CliRunOpts, output: ModeOutput): void {
+  try {
+    const sessionId = opts.sessionId;
+    if (!sessionId) return;
+    store.chats.ensureSession({
+      id: sessionId,
+      cwd: opts.cwd,
+      mode: opts.mode,
+      title: deriveTitle(opts.prompt),
+    });
+    const route = (output.routes ?? [])[0];
+    store.chats.appendMessage({
+      sessionId,
+      role: 'user',
+      text: opts.prompt,
+      runId: output.runId,
+      route: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+    });
+    store.chats.appendMessage({
+      sessionId,
+      role: 'assistant',
+      text: output.text ?? '',
+      runId: output.runId,
+      route: route ? `${route.via ?? route.provider},${route.model}` : null,
+      tokensIn: output.tokensIn,
+      tokensOut: output.tokensOut,
+      costUsd: output.costUsd,
+    });
+  } catch {
+    // best-effort persistence
+  }
+}
+
+function deriveTitle(prompt: string): string {
+  const t = prompt.trim().replace(/\s+/g, ' ');
+  return t.length > 64 ? `${t.slice(0, 61)}...` : t || 'New chat';
 }
 
 /**

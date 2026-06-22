@@ -6,6 +6,9 @@ import { runMemoryCommand } from './commands/memory.js';
 import { runRouteCommand } from './commands/route.js';
 import { runInitCommand } from './commands/init.js';
 import { runDashboardCommand } from './commands/dashboard.js';
+import { runDaemonCommand } from './commands/daemon.js';
+import { runLoopCommand } from './commands/loop.js';
+import { runAppCommand } from './commands/app.js';
 import { loadCredentialsIntoEnv } from './ui/setup.js';
 import { BRAND_NAME } from './branding/index.js';
 import { CLI_VERSION } from './version.js';
@@ -100,6 +103,36 @@ export async function runCli(argv: string[]): Promise<void> {
         port: opts.port,
         open: opts.open !== false,
       });
+    });
+
+  program
+    .command('daemon')
+    .description('run the persistent CodeRouter app-server (supervises loops, serves the app)')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .option('-p, --port <port>', 'preferred port', (v) => Number.parseInt(v, 10))
+    .action(async (opts: { cwd?: string; port?: number }) => {
+      await runDaemonCommand({ cwd: opts.cwd ?? process.cwd(), port: opts.port });
+    });
+
+  program
+    .command('loop [request...]')
+    .description('AI Loop Builder: describe an outcome, CodeRouter generates + runs a verified loop')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .option('--preset <preset>', 'safe|aggressive|ci-repair|migration', 'safe')
+    .option('--run', 'execute the generated loop (otherwise just preview the spec)', false)
+    .option('--apply', 'merge changes without an approval pause', false)
+    .option('--max-iterations <n>', 'override the iteration cap', (v) => Number.parseInt(v, 10))
+    .option('--json', 'emit JSON', false)
+    .action(async (parts: string[], opts) => {
+      await runLoopCommand({ request: (parts ?? []).join(' '), ...opts });
+    });
+
+  program
+    .command('app')
+    .description('launch the CodeRouter Studio desktop app (starts the daemon if needed)')
+    .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .action(async (opts: { cwd?: string }) => {
+      await runAppCommand({ cwd: opts.cwd ?? process.cwd() });
     });
 
   program

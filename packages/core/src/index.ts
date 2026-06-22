@@ -22,6 +22,7 @@ export * as agent from './agent/index.js';
 export * as models from './models/index.js';
 export * as customize from './customize/index.js';
 export * as plugins from './plugins/index.js';
+export * as loops from './loops/index.js';
 
 // Convenience top-level re-exports of the most commonly used symbols.
 // Mirrors what the CLI, MCP server, and eval harness import.
@@ -48,6 +49,7 @@ export {
 } from './classify/index.js';
 export { matchInstant } from './router/instant.js';
 export { pick, pickStrong } from './router/policy.js';
+export type { RouterContext, MemoryBias, PickOptions } from './router/policy.js';
 export { fastClassification } from './router/fast.js';
 export { effortProfile } from './router/effort.js';
 export { deriveMemoryBias } from './router/bias.js';
@@ -90,6 +92,29 @@ export type {
   InstalledPlugin,
   InstallManifest,
 } from './plugins/index.js';
+export type {
+  LoopSpec,
+  LoopStatus,
+  LoopRecord,
+  LoopIteration,
+  LoopEvent,
+  LoopPreset,
+  LoopValidation,
+  VerifierResult,
+  LoopRunContext,
+} from './loops/index.js';
+export {
+  LoopSupervisor,
+  generateLoopSpec,
+  validateLoopSpec,
+  discoverVerifiers,
+  runLoop,
+  approveLoopWorktree,
+  discardLoopWorktree,
+  PRESETS,
+  applyPreset,
+} from './loops/index.js';
+export { coderouterHome } from './paths.js';
 export { detectClarifications } from './clarify/index.js';
 export {
   openStore,
@@ -98,7 +123,7 @@ export {
   listProjects,
   discoverProjects,
 } from './store/index.js';
-export type { ProjectEntry } from './store/index.js';
+export type { ProjectEntry, ChatSession, ChatMessageRecord } from './store/index.js';
 export { loadConfig } from './config/index.js';
 export { runMode } from './modes/dispatch.js';
 export {

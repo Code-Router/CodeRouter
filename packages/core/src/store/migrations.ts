@@ -114,6 +114,72 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    description: 'loops + loop_iterations + chat_sessions + chat_messages (CodeRouter Studio)',
+    apply(db) {
+      db.exec(`
+        CREATE TABLE loops (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          status TEXT NOT NULL,
+          spec_json TEXT NOT NULL,
+          iterations_done INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          files_changed_json TEXT NOT NULL DEFAULT '[]',
+          last_diff TEXT,
+          error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_loops_status ON loops(status);
+        CREATE INDEX idx_loops_updated ON loops(updated_at);
+
+        CREATE TABLE loop_iterations (
+          id TEXT PRIMARY KEY,
+          loop_id TEXT NOT NULL,
+          idx INTEGER NOT NULL,
+          run_id TEXT,
+          phase TEXT NOT NULL,
+          status TEXT NOT NULL,
+          verifier_json TEXT NOT NULL DEFAULT '[]',
+          diff TEXT,
+          summary TEXT NOT NULL DEFAULT '',
+          cost_usd REAL NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_loop_iterations_loop ON loop_iterations(loop_id);
+
+        CREATE TABLE chat_sessions (
+          id TEXT PRIMARY KEY,
+          cwd TEXT NOT NULL,
+          title TEXT NOT NULL DEFAULT 'New chat',
+          mode TEXT NOT NULL,
+          message_count INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_chat_sessions_updated ON chat_sessions(updated_at);
+
+        CREATE TABLE chat_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          text TEXT NOT NULL,
+          run_id TEXT,
+          route TEXT,
+          tokens_in INTEGER NOT NULL DEFAULT 0,
+          tokens_out INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_chat_messages_session ON chat_messages(session_id);
+      `);
+    },
+  },
 ];
 
 export function migrate(db: Database): { from: number; to: number } {

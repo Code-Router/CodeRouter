@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Static, Text, render, useApp, useInput } from 'ink';
 import type {
@@ -30,7 +31,9 @@ import {
 } from './artifacts.js';
 import { isDirectoryTrusted, trustDirectory } from './trust.js';
 import { activeMention, listWorkspaceFiles, rankFiles } from './fileIndex.js';
-import { executeRun } from '../runtime.js';
+import { buildExecutionEnv, executeRun } from '../runtime.js';
+import { runAppCommand } from '../commands/app.js';
+import { generateLoopSpec, validateLoopSpec } from '@coderouter/core';
 import { startDashboardServer, type DashboardServer } from '../dashboard/server.js';
 import { spawn } from 'node:child_process';
 import {
@@ -88,6 +91,8 @@ const COMMANDS: CommandDef[] = [
   { name: 'security', hint: 'warn|block', desc: 'set prompt-injection policy' },
   { name: 'models', hint: '[search]', desc: 'browse OpenRouter tool-capable models' },
   { name: 'dashboard', hint: '', desc: 'open the usage + settings dashboard' },
+  { name: 'loop', hint: '<goal>', desc: 'build + run a verified AI loop for a goal' },
+  { name: 'app', hint: '', desc: 'launch CodeRouter Studio (desktop app)' },
   { name: 'runs', hint: '', desc: 'list saved run patches' },
   { name: 'accept', hint: '[runId]', desc: 'apply a saved run (latest if omitted)' },
   { name: 'reject', hint: '[runId]', desc: 'discard a saved run' },
@@ -414,6 +419,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     Partial<Record<ProviderId, string>>
   >({});
   const resumeSessionsRef = useRef<Partial<Record<ProviderId, string>>>({});
+  // Stable conversation id for the whole REPL session so every turn is
+  // persisted into one browsable chat (see store/chats + the desktop app).
+  const chatSessionIdRef = useRef<string>(randomUUID());
   // Conversation history for first-party agent multi-turn memory.
   // Persists across REPL turns, condensed when approaching the
   // context window limit.
@@ -874,6 +882,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         effort,
         apply: false,
         fast,
+        sessionId: chatSessionIdRef.current,
         injectionPolicy: securityPolicy,
         // Replay session ids captured from prior turns. The agent
         // mode picks the entry that matches the routed provider and
@@ -1442,6 +1451,53 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
           pushSystem(`  dashboard running at ${url} (opening in your browser)`, 'success');
         } catch (err) {
           pushSystem(`  failed to start dashboard: ${(err as Error).message}`, 'warn');
+        }
+        return;
+      }
+      case 'loop': {
+        if (!arg.trim()) {
+          pushSystem('  usage: /loop <goal>   e.g. /loop fix the failing auth tests', 'info');
+          return;
+        }
+        pushSystem('  building loop spec…', 'info');
+        try {
+          const { registry, router } = await buildExecutionEnv(cwd);
+          const { spec, discovered, generated } = await generateLoopSpec(
+            arg,
+            { registry, router, cwd },
+            { preset: 'safe' },
+          );
+          const validation = validateLoopSpec(spec);
+          const lines = [
+            `  loop: ${spec.name}`,
+            `  goal: ${spec.goal}`,
+            `  verifier: ${spec.verifier.commands.join(', ') || '(none detected)'}`,
+            `  limits: ${spec.limits.maxIterations} iters · $${spec.limits.maxCostUsd} · ${spec.limits.maxFilesChanged} files`,
+            `  models: planner=${spec.models.planner} executor=${spec.models.executor} reviewer=${spec.models.reviewer}`,
+          ];
+          if (!generated) lines.push('  (generated from repo heuristics — no model was available)');
+          if (discovered.commands.length === 0)
+            lines.push('  ⚠ no verifier commands detected; add one before running');
+          pushSystem(lines.join('\n'), validation.valid ? 'success' : 'warn');
+          if (!validation.valid) {
+            pushSystem(`  not runnable:\n${validation.issues.map((i) => `    - ${i}`).join('\n')}`, 'warn');
+          } else {
+            pushSystem(
+              `  run it: coderouter loop "${arg}" --run   ·   or open the app: /app`,
+              'info',
+            );
+          }
+        } catch (err) {
+          pushSystem(`  failed to build loop: ${(err as Error).message}`, 'warn');
+        }
+        return;
+      }
+      case 'app': {
+        try {
+          await runAppCommand({ cwd });
+          pushSystem('  launching CodeRouter Studio…', 'success');
+        } catch (err) {
+          pushSystem(`  failed to launch app: ${(err as Error).message}`, 'warn');
         }
         return;
       }

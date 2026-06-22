@@ -1,13 +1,17 @@
+import { ChatStore } from './chats.js';
 import { type Database, openDatabase, resolveDbPath } from './db.js';
 import { FactStore, FailurePatternStore, OverrideStore } from './facts.js';
 import { LearnedStore } from './learned.js';
+import { LoopStore } from './loops.js';
 import { migrate } from './migrations.js';
 import { RunStore } from './runs.js';
 import { SessionStore } from './sessions.js';
 
+export * from './chats.js';
 export * from './db.js';
 export * from './facts.js';
 export * from './learned.js';
+export * from './loops.js';
 export * from './migrations.js';
 export * from './projects.js';
 export * from './runs.js';
@@ -21,6 +25,8 @@ export type Store = {
   facts: FactStore;
   overrides: OverrideStore;
   failures: FailurePatternStore;
+  loops: LoopStore;
+  chats: ChatStore;
 };
 
 /**
@@ -42,6 +48,8 @@ export async function openStore(path: string): Promise<Store> {
     facts: new FactStore(db),
     overrides: new OverrideStore(db),
     failures: new FailurePatternStore(db),
+    loops: new LoopStore(db),
+    chats: new ChatStore(db),
   };
 }
 
