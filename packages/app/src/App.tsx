@@ -120,16 +120,26 @@ function Shell(): React.ReactElement {
     });
   };
 
-  const titleBar = mac ? 'pt-[44px]' : 'pt-3';
   const activeName = projects.find((p) => p.cwd === project)?.name;
 
   return (
     <div className="flex h-full">
       {sidebarOpen && (
       <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-panel">
-        <div className={cls('drag flex items-center gap-2 px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
-          <Logo className="h-12 w-12" />
-          <span className="text-lg font-semibold tracking-tight text-accent">CodeRouter</span>
+        <div className="drag">
+          <div className={cls('flex items-center justify-end px-2', mac ? 'h-11' : 'h-9 pt-1')}>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-panel2 hover:text-text"
+              title="Collapse sidebar"
+            >
+              <PanelLeft className="h-[17px] w-[17px]" strokeWidth={2} />
+            </button>
+          </div>
+          <div className="flex items-center gap-2 px-3 pb-3">
+            <Logo className="h-12 w-12" />
+            <span className="text-lg font-semibold tracking-tight text-accent">CodeRouter</span>
+          </div>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
@@ -141,11 +151,11 @@ function Shell(): React.ReactElement {
                 key={n.id}
                 onClick={() => (n.id === 'chat' ? newChat() : setNav(n.id))}
                 className={cls(
-                  'no-drag mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+                  'no-drag mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[15px] font-medium transition-colors',
                   active ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
                 )}
               >
-                <Icon className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
+                <Icon className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
                 {n.label}
               </button>
             );
@@ -162,18 +172,18 @@ function Shell(): React.ReactElement {
                   onClick={() => toggleProject(p.cwd)}
                   title={p.cwd}
                   className={cls(
-                    'no-drag flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-sm transition-colors hover:bg-panel2',
+                    'no-drag flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-[15px] font-medium transition-colors hover:bg-panel2',
                     project === p.cwd ? 'text-text' : 'text-muted hover:text-text',
                   )}
                 >
-                  <ChevronRight className={cls('h-3 w-3 shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={2.5} />
+                  <ChevronRight className={cls('h-3.5 w-3.5 shrink-0 transition-transform', open && 'rotate-90')} strokeWidth={2.5} />
                   {open ? (
-                    <FolderOpen className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
+                    <FolderOpen className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
                   ) : (
-                    <Folder className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
+                    <Folder className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
                   )}
                   <span className="truncate">{p.name}</span>
-                  {pChats.length > 0 && <span className="ml-auto pl-1 text-[10px] text-muted/70">{pChats.length}</span>}
+                  {pChats.length > 0 && <span className="ml-auto pl-1 text-[11px] text-muted/70">{pChats.length}</span>}
                 </button>
                 {open && (
                   <div className="mb-1 ml-3 border-l border-border pl-2">
@@ -184,7 +194,7 @@ function Shell(): React.ReactElement {
                         onClick={() => openChat(c)}
                         title={c.title}
                         className={cls(
-                          'no-drag flex w-full items-center rounded-md px-2 py-1 text-left text-[13px] transition-colors',
+                          'no-drag flex w-full items-center rounded-md px-2 py-1 text-left text-sm transition-colors',
                           nav === 'chat' && chatId === c.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
                         )}
                       >
@@ -202,11 +212,11 @@ function Shell(): React.ReactElement {
           <button
             onClick={() => setNav('settings')}
             className={cls(
-              'no-drag flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+              'no-drag flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[15px] font-medium transition-colors',
               nav === 'settings' ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
             )}
           >
-            <SettingsIcon className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
+            <SettingsIcon className="h-[17px] w-[17px] shrink-0" strokeWidth={2} />
             Settings
             {!connected && <span className="ml-auto h-2 w-2 rounded-full bg-bad" title="daemon offline" />}
           </button>
@@ -217,19 +227,21 @@ function Shell(): React.ReactElement {
       <main className="flex min-w-0 flex-1 flex-col">
         <header
           className={cls(
-            'drag flex items-center gap-2 border-b border-border pb-3 pr-5',
-            titleBar,
+            'drag flex shrink-0 items-center gap-2 border-b border-border pr-4',
+            mac ? 'h-11' : 'h-12',
             !sidebarOpen && mac ? 'pl-[80px]' : 'pl-4',
           )}
         >
-          <button
-            onClick={() => setSidebarOpen((o) => !o)}
-            className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-panel2 hover:text-text"
-            title={sidebarOpen ? 'Collapse sidebar' : 'Open sidebar'}
-          >
-            <PanelLeft className="h-[17px] w-[17px]" strokeWidth={2} />
-          </button>
-          <h1 className="text-sm font-semibold">{nav === 'chat' ? 'Chat' : TOP_NAV.find((n) => n.id === nav)?.label ?? 'Settings'}</h1>
+          {!sidebarOpen && (
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="no-drag flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-panel2 hover:text-text"
+              title="Open sidebar"
+            >
+              <PanelLeft className="h-[17px] w-[17px]" strokeWidth={2} />
+            </button>
+          )}
+          <h1 className="text-[15px] font-semibold">{nav === 'chat' ? 'Chat' : TOP_NAV.find((n) => n.id === nav)?.label ?? 'Settings'}</h1>
           <div className="no-drag ml-auto flex items-center gap-1">
             {(nav === 'loops' || nav === 'chat') && activeName && (
               <span className="mr-1 max-w-[180px] truncate text-xs text-muted">{activeName}</span>
@@ -301,7 +313,7 @@ function PanelToggle({
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }): React.ReactElement {
-  return <div className="px-2 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-muted">{children}</div>;
+  return <div className="px-2 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wider text-muted">{children}</div>;
 }
 
 function Empty({ children }: { children: React.ReactNode }): React.ReactElement {
