@@ -2,6 +2,7 @@ import { encode as encodeTokens } from 'gpt-tokenizer';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { exec } from '../sandbox/exec.js';
+import { whichSync } from '../sandbox/which.js';
 import type { ContextManifest, ContextManifestEntry } from '../types.js';
 import { isSecretPath } from './secrets.js';
 
@@ -154,17 +155,37 @@ export function tokensFor(text: string): number {
   }
 }
 
+/**
+ * Whether a standalone `rg` binary is on PATH. Memoised: PATH doesn't
+ * change within a process, and we'd otherwise re-resolve it once per
+ * prompt noun. `null` = not yet checked.
+ */
+let rgAvailable: boolean | null = null;
+
 async function ripgrep(pattern: string, cwd: string): Promise<string[]> {
-  const r = await exec(
-    'rg',
-    ['--files-with-matches', '-i', '--hidden', '--glob', '!.git', '-S', pattern, '.'],
-    { cwd, timeoutMs: 5_000 },
-  );
-  if (r.exitCode !== 0 && r.exitCode !== 1) return [];
-  return r.stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+  // The L1 ripgrep boost is a best-effort relevance signal, not a hard
+  // requirement - the scan still works (just less precisely) without
+  // it. Guard on `whichSync` like `agent/tools/grep.ts` does so a
+  // machine without a standalone ripgrep doesn't crash the whole run
+  // with `spawn rg ENOENT`.
+  if (rgAvailable === null) rgAvailable = whichSync('rg') !== null;
+  if (!rgAvailable) return [];
+  try {
+    const r = await exec(
+      'rg',
+      ['--files-with-matches', '-i', '--hidden', '--glob', '!.git', '-S', pattern, '.'],
+      { cwd, timeoutMs: 5_000 },
+    );
+    if (r.exitCode !== 0 && r.exitCode !== 1) return [];
+    return r.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    // ENOENT (rg vanished mid-process) or spawn failure - degrade
+    // gracefully rather than aborting the agent run.
+    return [];
+  }
 }
 
 async function recentlyChangedFiles(cwd: string): Promise<Set<string>> {
