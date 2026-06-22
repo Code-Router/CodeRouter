@@ -118,6 +118,46 @@ describe('runAgent', () => {
     expect(activity).toContain('tool_result:echo');
   });
 
+  it('acts on a tool call emitted as text instead of native tool_calls', async () => {
+    const echoTool: Tool = {
+      name: 'echo',
+      description: 'echo',
+      parameters: { type: 'object', properties: { msg: { type: 'string' } }, required: ['msg'] },
+      describe: () => 'echo',
+      run: async (args) => ({ body: `echoed:${String(args.msg)}` }),
+    };
+    // First turn: the model prints a Qwen-style textual tool call with no
+    // native tool_calls. The loop must parse it, run the tool, and keep going.
+    const transport = new FakeTransport([
+      {
+        message: {
+          role: 'assistant',
+          content:
+            'let me echo\n<tool_call>\n<function=echo>\n<parameter=msg>\nhi\n</parameter>\n</function>\n</tool_call>',
+        },
+        tokensIn: 5,
+        tokensOut: 2,
+      },
+      {
+        message: { role: 'assistant', content: 'done' },
+        tokensIn: 3,
+        tokensOut: 1,
+      },
+    ]);
+    const result = await runAgent({ prompt: 'echo hi', cwd, tools: [echoTool], transport });
+    expect(result.iterations).toBe(2);
+    expect(result.finishReason).toBe('done');
+    // Tool ran and its result was fed back to the model.
+    const toolMsg = transport.sent[1]!.messages.find((m) => m.role === 'tool');
+    expect(toolMsg?.content).toBe('echoed:hi');
+    // The raw <tool_call> markup is stripped from the assistant turn.
+    const assistantMsg = transport.sent[1]!.messages.find(
+      (m) => m.role === 'assistant' && m.tool_calls,
+    );
+    expect(assistantMsg?.content).toBe('let me echo');
+    expect(result.text).not.toContain('<tool_call>');
+  });
+
   it('reports the tool error back to the model rather than throwing', async () => {
     const failingTool: Tool = {
       name: 'fail',

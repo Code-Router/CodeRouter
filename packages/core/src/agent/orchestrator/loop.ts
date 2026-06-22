@@ -24,6 +24,7 @@ import type { ChatMessage, ContentBlock, ToolCall } from '../transport/types.js'
 import { DEFAULT_SYSTEM_PROMPT } from '../systemPrompt.js';
 import type { AgentRunInput, AgentRunResult, AgentUsage, Tool } from '../types.js';
 import { checkBudget, resolveBudget } from './budget.js';
+import { parseTextualToolCalls } from './toolParse.js';
 import { imageToDataUrl } from '../../context/images.js';
 
 export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
@@ -108,7 +109,23 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
         : (input.transport.estimateCost?.(turn.tokensIn, turn.tokensOut) ?? 0);
     input.onUsage?.({ ...usage });
 
-    const content = typeof turn.message.content === 'string' ? turn.message.content : '';
+    let content = typeof turn.message.content === 'string' ? turn.message.content : '';
+    let toolCalls = turn.message.tool_calls ?? [];
+
+    // Fallback for models that emit tool calls as text instead of using
+    // the native `tool_calls` field (common with smaller open models on
+    // OpenRouter — Qwen, Hermes, etc.). Without this the loop would see
+    // no tool calls, treat the raw `<tool_call>…` text as a final answer
+    // and stop mid-task. We parse the text, act on the calls, and strip
+    // the block so neither the user nor the transcript sees raw markup.
+    if (toolCalls.length === 0 && content) {
+      const parsed = parseTextualToolCalls(content, new Set(toolByName.keys()));
+      if (parsed.toolCalls.length > 0) {
+        toolCalls = parsed.toolCalls;
+        content = parsed.cleanedContent;
+      }
+    }
+
     if (content) {
       // Only emit the full content when the transport didn't already
       // stream it incrementally via onDelta.
@@ -116,15 +133,12 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
       fullText.push(content);
     }
 
-    const toolCalls = turn.message.tool_calls ?? [];
-
-    // Persist the assistant message verbatim. The OpenAI tool-call
-    // protocol requires it to land BEFORE the matching `tool`
-    // messages, so we push it now even if we'll exit on the next
-    // line.
+    // Persist the assistant message. The OpenAI tool-call protocol
+    // requires it to land BEFORE the matching `tool` messages, so we
+    // push it now even if we'll exit on the next line.
     messages.push({
       role: 'assistant',
-      content: turn.message.content ?? null,
+      content: content || (toolCalls.length > 0 ? null : ''),
       tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
     });
 
