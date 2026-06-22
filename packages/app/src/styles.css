@@ -6,11 +6,25 @@
   color-scheme: dark;
 }
 
+/* Global UI scale. Tailwind sizing/spacing is rem-based, so shrinking the
+   root font size scales the whole app down proportionally. */
+html {
+  font-size: 13px;
+}
+
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
+}
+
+/* Electron draggable title bar regions (macOS inset traffic lights). */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
 }
 
 body {

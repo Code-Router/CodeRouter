@@ -9,4 +9,5 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('coderouter', {
   getDaemonUrl: (): Promise<string> => ipcRenderer.invoke('daemon:url'),
   isElectron: true,
+  platform: process.platform,
 });

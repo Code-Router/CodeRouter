@@ -16,9 +16,13 @@ import type {
 
 declare global {
   interface Window {
-    coderouter?: { getDaemonUrl: () => Promise<string>; isElectron: boolean };
+    coderouter?: { getDaemonUrl: () => Promise<string>; isElectron: boolean; platform?: string };
   }
 }
+
+/** True on macOS, where the window uses inset traffic lights. */
+export const isMac = (): boolean =>
+  (window.coderouter?.platform ?? (navigator.platform.toLowerCase().includes('mac') ? 'darwin' : '')) === 'darwin';
 
 const DEFAULT_PORT = 4329;
 let basePromise: Promise<string> | null = null;
