@@ -1,109 +1,119 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Plus, SquareTerminal, X } from 'lucide-react';
-import { execCommand } from '../lib/api';
+import { Eraser, Plus, SquarePlus, SquareTerminal, X } from 'lucide-react';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
+import { resolveWsUrl } from '../lib/api';
+import { useTheme } from '../lib/theme';
 import { cls } from './common';
 
-type Line = { kind: 'cmd' | 'out' | 'err' | 'info'; text: string };
-
 /**
- * A lightweight terminal for the selected project. Each command is run as
- * its own `bash -lc` on the daemon (see /api/exec) — not a persistent PTY —
- * so we track `cwd` here and resolve `cd` with a `pwd` round-trip. Covers
- * git/npm/test/ls workflows; interactive TUIs (vim, etc.) aren't supported.
+ * Studio terminal: a real shell. The daemon spawns a genuine PTY (node-pty)
+ * and streams it over a WebSocket (`/api/pty`); we render it with xterm.js.
+ * It's a persistent, responsive session — full line editing, colors, vim,
+ * etc. — not the old per-command exec.
  */
 export function Terminal({ project, onClose }: { project: string | null; onClose?: () => void }): React.ReactElement {
-  const [cwd, setCwd] = useState<string>(project ?? '');
-  const [lines, setLines] = useState<Line[]>([]);
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState<string[]>([]);
-  const [histIdx, setHistIdx] = useState<number | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const { pref } = useTheme();
+  const [sessionKey, setSessionKey] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerm | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  useEffect(() => setCwd(project ?? ''), [project]);
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [lines]);
+    const host = hostRef.current;
+    if (!host) return;
+    let disposed = false;
 
-  const push = (line: Line): void => setLines((l) => [...l, line]);
+    const term = new XTerm({
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Code", monospace',
+      fontSize: 13,
+      lineHeight: 1.2,
+      cursorBlink: true,
+      allowProposedApi: true,
+      scrollback: 5000,
+      theme: buildTheme(),
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(host);
+    termRef.current = term;
+    safeFit(fit);
 
-  const run = async (raw: string): Promise<void> => {
-    const command = raw.trim();
-    if (!command || busy) return;
-    setHistory((h) => [...h, command]);
-    setHistIdx(null);
-    setInput('');
-    push({ kind: 'cmd', text: `${shortCwd(cwd)} % ${command}` });
+    let ws: WebSocket | null = null;
 
-    if (command === 'clear') {
-      setLines([]);
-      return;
-    }
-
-    setBusy(true);
-    const base = cwd || project || '';
-
-    // `cd` has no persistent process, so resolve the new directory via pwd.
-    const cdMatch = /^cd(\s+(.*))?$/.exec(command);
-    if (cdMatch) {
-      const arg = (cdMatch[2] ?? '').trim();
-      let newCwd = '';
-      let errText = '';
+    function sendResize(): void {
       try {
-        await execCommand({ cwd: base, command: `cd ${arg || '~'} && pwd` }, (e) => {
-          if (e.type === 'out') newCwd += e.text;
-          else if (e.type === 'err') errText += e.text;
-        });
-      } catch (err) {
-        errText = err instanceof Error ? err.message : String(err);
-      }
-      if (newCwd.trim()) setCwd(newCwd.trim().split('\n').pop() ?? base);
-      else if (errText.trim()) push({ kind: 'err', text: errText.trimEnd() });
-      setBusy(false);
-      inputRef.current?.focus();
-      return;
-    }
-
-    try {
-      await execCommand({ cwd: base, command }, (e) => {
-        if (e.type === 'out') push({ kind: 'out', text: e.text.replace(/\n$/, '') });
-        else if (e.type === 'err') push({ kind: 'err', text: e.text.replace(/\n$/, '') });
-        else if (e.type === 'exit' && e.code !== 0) push({ kind: 'info', text: `exited with code ${e.code}` });
-      });
-    } catch (err) {
-      push({ kind: 'err', text: err instanceof Error ? err.message : String(err) });
-    } finally {
-      setBusy(false);
-      inputRef.current?.focus();
-    }
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      void run(input);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (history.length === 0) return;
-      const idx = histIdx === null ? history.length - 1 : Math.max(0, histIdx - 1);
-      setHistIdx(idx);
-      setInput(history[idx]);
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (histIdx === null) return;
-      const idx = histIdx + 1;
-      if (idx >= history.length) {
-        setHistIdx(null);
-        setInput('');
-      } else {
-        setHistIdx(idx);
-        setInput(history[idx]);
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'r', c: term.cols, r: term.rows }));
+      } catch {
+        /* ignore */
       }
     }
-  };
 
-  const name = shortCwd(cwd || project || '~');
+    void resolveWsUrl(
+      `/api/pty?cwd=${encodeURIComponent(project ?? '')}&cols=${term.cols}&rows=${term.rows}`,
+    ).then((url) => {
+      if (disposed) return;
+      ws = new WebSocket(url);
+      wsRef.current = ws;
+      ws.onopen = () => sendResize();
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') term.write(ev.data);
+        else if (ev.data instanceof Blob) void ev.data.text().then((t) => term.write(t));
+      };
+      ws.onclose = () => {
+        if (!disposed) term.write('\r\n\x1b[2m[process exited — press + for a new terminal]\x1b[0m\r\n');
+      };
+      ws.onerror = () => {
+        if (!disposed) term.write('\r\n\x1b[31mCould not connect to the terminal backend.\x1b[0m\r\n');
+      };
+    });
+
+    const dataSub = term.onData((d) => {
+      try {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'i', d }));
+      } catch {
+        /* ignore */
+      }
+    });
+
+    const ro = new ResizeObserver(() => {
+      safeFit(fit);
+      sendResize();
+    });
+    ro.observe(host);
+    term.focus();
+
+    return () => {
+      disposed = true;
+      ro.disconnect();
+      dataSub.dispose();
+      try {
+        ws?.close();
+      } catch {
+        /* ignore */
+      }
+      term.dispose();
+      termRef.current = null;
+      wsRef.current = null;
+    };
+  }, [project, sessionKey]);
+
+  // Re-theme in place when light/dark changes (no reconnect).
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = buildTheme();
+  }, [pref]);
+
+  const name = shortCwd(project ?? '~');
+  const newTerminal = (): void => {
+    setMenuOpen(false);
+    setSessionKey((k) => k + 1);
+  };
+  const clear = (): void => {
+    setMenuOpen(false);
+    termRef.current?.clear();
+  };
 
   return (
     <div className="flex h-full flex-col bg-bg">
@@ -122,13 +132,29 @@ export function Terminal({ project, onClose }: { project: string | null; onClose
             </button>
           )}
         </div>
-        <button
-          onClick={() => setLines([])}
-          title="New terminal"
-          className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-panel2 hover:text-text"
-        >
-          <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
-        </button>
+
+        <div className="relative">
+          <button
+            onClick={() => setMenuOpen((o) => !o)}
+            title="New terminal"
+            className={cls(
+              'flex h-6 w-6 items-center justify-center rounded hover:bg-panel2 hover:text-text',
+              menuOpen ? 'text-text' : 'text-muted',
+            )}
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </button>
+          {menuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+              <div className="absolute left-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-lg border border-border bg-panel py-1 shadow-xl shadow-black/40">
+                <TermMenuItem icon={SquarePlus} label="New terminal" onClick={newTerminal} />
+                <TermMenuItem icon={Eraser} label="Clear" onClick={clear} />
+              </div>
+            </>
+          )}
+        </div>
+
         {onClose && (
           <button
             onClick={onClose}
@@ -140,47 +166,72 @@ export function Terminal({ project, onClose }: { project: string | null; onClose
         )}
       </div>
 
-      {/* Output + inline prompt */}
+      {/* xterm host */}
       <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2 font-mono text-xs leading-relaxed"
-        onClick={() => inputRef.current?.focus()}
-      >
-        {lines.map((l, i) => (
-          <div
-            key={i}
-            className={cls(
-              'whitespace-pre-wrap break-words',
-              l.kind === 'cmd' && 'text-text',
-              l.kind === 'out' && 'text-muted',
-              l.kind === 'err' && 'text-bad',
-              l.kind === 'info' && 'text-warn',
-            )}
-          >
-            {l.text}
-          </div>
-        ))}
-        <div className="flex items-center gap-1.5">
-          <span className="shrink-0 text-accent">{name} %</span>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            disabled={busy}
-            spellCheck={false}
-            autoComplete="off"
-            className="min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted/60 disabled:opacity-60"
-            placeholder={busy ? 'running…' : ''}
-          />
-        </div>
-      </div>
+        ref={hostRef}
+        className="min-h-0 flex-1 overflow-hidden px-2 py-1.5"
+        onClick={() => termRef.current?.focus()}
+      />
     </div>
   );
+}
+
+function TermMenuItem({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: typeof Plus;
+  label: string;
+  onClick: () => void;
+}): React.ReactElement {
+  return (
+    <button onClick={onClick} className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-text hover:bg-panel2">
+      <Icon className="h-4 w-4 shrink-0 text-muted" strokeWidth={2} />
+      {label}
+    </button>
+  );
+}
+
+function safeFit(fit: FitAddon): void {
+  try {
+    fit.fit();
+  } catch {
+    /* container not measurable yet */
+  }
 }
 
 function shortCwd(p: string): string {
   if (!p) return '~';
   const parts = p.replace(/\/$/, '').split('/');
   return parts[parts.length - 1] || p;
+}
+
+type Triple = [number, number, number];
+
+function channels(name: string, fallback: Triple): Triple {
+  if (typeof window === 'undefined') return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const parts = v.split(/\s+/).map(Number);
+  if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) return [parts[0], parts[1], parts[2]];
+  return fallback;
+}
+
+const rgb = (c: Triple): string => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+const rgba = (c: Triple, a: number): string => `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})`;
+
+/** Derive an xterm theme from the app's CSS variables so it matches light/dark. */
+function buildTheme(): Record<string, string> {
+  const bg = channels('--c-bg', [11, 13, 18]);
+  const text = channels('--c-text', [230, 233, 240]);
+  const accent = channels('--c-accent', [57, 211, 83]);
+  const muted = channels('--c-muted', [139, 147, 167]);
+  return {
+    background: rgb(bg),
+    foreground: rgb(text),
+    cursor: rgb(accent),
+    cursorAccent: rgb(bg),
+    selectionBackground: rgba(accent, 0.3),
+    brightBlack: rgb(muted),
+  };
 }

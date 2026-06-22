@@ -14,6 +14,7 @@ import {
   DEFAULT_DAEMON_PORT,
   writeDaemonInfo,
 } from './lockfile.js';
+import { handlePtyUpgrade } from './pty.js';
 import { getSupervisor } from './supervisor.js';
 
 /**
@@ -101,6 +102,17 @@ export async function startDaemon(opts: { cwd: string; port?: number } = { cwd: 
         // response already sent
       }
     });
+  });
+
+  // Real PTY terminal for Studio: upgrade `/api/pty` to a WebSocket and
+  // relay a genuine pseudo-terminal session (see daemon/pty.ts).
+  server.on('upgrade', (req, socket, head) => {
+    const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+    if (pathname === '/api/pty' && allowedOrigin(req)) {
+      void handlePtyUpgrade(req, socket, head, cwd);
+    } else {
+      socket.destroy();
+    }
   });
 
   const port = await listen(server, opts.port ?? DEFAULT_DAEMON_PORT);

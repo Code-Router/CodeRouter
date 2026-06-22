@@ -36,5 +36,7 @@ export default defineConfig({
   //     duplication issues when bundling).
   //   - @vscode/ripgrep: ships a per-platform `rg` binary launched as a
   //     subprocess via its `rgPath`, so it must live in node_modules.
-  external: ['ink', 'react', '@vscode/ripgrep'],
+  //   - node-pty: native addon (prebuilt .node) for the Studio terminal.
+  //   - ws: WebSocket server for the PTY relay.
+  external: ['ink', 'react', '@vscode/ripgrep', 'node-pty', 'ws'],
 });

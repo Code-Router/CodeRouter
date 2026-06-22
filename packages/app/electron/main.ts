@@ -44,13 +44,41 @@ async function ping(port: number): Promise<DaemonInfo | null> {
   }
 }
 
-/** Resolve the `coderouter` CLI entry to spawn the daemon. */
-function resolveCli(): { cmd: string; args: string[] } {
-  // Prefer an explicit override, else the locally built CLI, else PATH.
-  if (process.env.CODEROUTER_CLI) return { cmd: process.execPath, args: [process.env.CODEROUTER_CLI] };
-  const localCli = join(app.getAppPath(), '..', 'cli', 'dist', 'cli.js');
-  if (existsSync(localCli)) return { cmd: process.execPath, args: [localCli] };
-  return { cmd: 'coderouter', args: [] };
+/**
+ * Locate a standalone Node binary. The daemon must run under regular Node
+ * (not Electron's bundled Node) so native addons like `node-pty` — which
+ * powers the Studio terminal and ships a prebuilt binary for the standard
+ * Node ABI — load correctly. Returns null if none can be found.
+ */
+function findNode(): string | null {
+  const candidates = [
+    process.env.CODEROUTER_NODE,
+    process.env.npm_node_execpath,
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+    '/usr/bin/node',
+  ];
+  for (const c of candidates) {
+    if (c && existsSync(c) && !/electron/i.test(c)) return c;
+  }
+  return null;
+}
+
+/** Resolve the command used to spawn the daemon. */
+function resolveCli(): { cmd: string; args: string[]; electronNode: boolean } {
+  const cliPath = process.env.CODEROUTER_CLI || (() => {
+    const local = join(app.getAppPath(), '..', 'cli', 'dist', 'cli.js');
+    return existsSync(local) ? local : null;
+  })();
+
+  if (cliPath) {
+    const node = findNode();
+    // Prefer standalone Node so node-pty loads; fall back to Electron-as-Node
+    // (the daemon still works, only the terminal backend would be unavailable).
+    if (node) return { cmd: node, args: [cliPath], electronNode: false };
+    return { cmd: process.execPath, args: [cliPath], electronNode: true };
+  }
+  return { cmd: 'coderouter', args: [], electronNode: false };
 }
 
 async function ensureDaemon(): Promise<DaemonInfo> {
@@ -67,14 +95,13 @@ async function ensureDaemon(): Promise<DaemonInfo> {
     if (alive) return alive;
   }
 
-  const { cmd, args } = resolveCli();
-  // When spawning via Electron's own binary (process.execPath), it must be
-  // told to behave as plain Node, otherwise it boots a second app instance.
-  const runAsNode = cmd === process.execPath;
+  const { cmd, args, electronNode } = resolveCli();
+  // When falling back to Electron's own binary, it must be told to behave as
+  // plain Node, otherwise it boots a second app instance.
   const child = spawn(cmd, [...args, 'daemon'], {
     detached: true,
     stdio: 'ignore',
-    env: runAsNode ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
+    env: electronNode ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env,
   });
   child.unref();
 

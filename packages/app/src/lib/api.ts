@@ -49,6 +49,14 @@ export function resolveBase(): Promise<string> {
   return basePromise;
 }
 
+/** Resolve a ws:// (or wss://) URL on the daemon for a given path. */
+export async function resolveWsUrl(path: string): Promise<string> {
+  const base = await resolveBase();
+  const u = new URL(base);
+  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${u.origin}${path}`;
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const base = await resolveBase();
   const res = await fetch(`${base}${path}`, {
