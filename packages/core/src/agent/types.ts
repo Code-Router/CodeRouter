@@ -108,6 +108,8 @@ export type AgentRunInput = {
 
   /** UI streaming callbacks (forwarded into the loop's emissions). */
   onChunk?: (chunk: string) => void;
+  /** Called with incremental reasoning/thinking text deltas. */
+  onReasoning?: (chunk: string) => void;
   onActivity?: (e: ActivityEvent) => void;
   onUsage?: (u: AgentUsage) => void;
   onUserQuestion?: (payload: AskUserQuestionPayload) => void;

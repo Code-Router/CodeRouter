@@ -599,10 +599,19 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
         },
       ];
     } else {
-      liveLogRef.current = [
-        ...log,
-        { id: logIdRef.current++, kind: 'thinking', text: event.text },
-      ];
+      // Merge consecutive thinking deltas into one growing entry so
+      // streamed reasoning forms a single dim block rather than one
+      // line per token.
+      const last = log.length > 0 ? log[log.length - 1] : undefined;
+      if (last && last.kind === 'thinking') {
+        const merged: LogEntry = { id: last.id, kind: 'thinking', text: last.text + event.text };
+        liveLogRef.current = [...log.slice(0, -1), merged];
+      } else {
+        liveLogRef.current = [
+          ...log,
+          { id: logIdRef.current++, kind: 'thinking', text: event.text },
+        ];
+      }
     }
     flushLiveOverflowToHistory();
     setLiveLog(liveLogRef.current);

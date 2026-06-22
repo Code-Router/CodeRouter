@@ -114,6 +114,9 @@ export class CodeRouterAgentAdapter extends BaseAdapter {
       transport,
       reasoningEffort: input.reasoningEffort,
       onChunk: input.onChunk,
+      onReasoning: input.onActivity
+        ? (chunk) => input.onActivity!({ kind: 'thinking', text: chunk })
+        : undefined,
       onActivity: input.onActivity,
       onUsage: input.onUsage,
       onUserQuestion: input.onUserQuestion,

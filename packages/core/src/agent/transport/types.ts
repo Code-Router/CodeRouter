@@ -51,6 +51,14 @@ export type ChatTurnRequest = {
   /** OpenAI-style reasoning effort param. */
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
   signal?: AbortSignal;
+  /**
+   * When set, the transport SHOULD stream the response and invoke
+   * this callback with incremental text deltas as they arrive.
+   * `content` carries answer text; `reasoning` carries chain-of-
+   * thought (shown dimmed in the REPL). Transports that don't
+   * support streaming simply ignore this and emit nothing.
+   */
+  onDelta?: (delta: { content?: string; reasoning?: string }) => void;
 };
 
 export type ChatTurnResponse = {
@@ -72,6 +80,14 @@ export type ChatTurnResponse = {
   costUsd?: number;
   /** Optional finish reason from the backend (`stop`, `tool_calls`, ...). */
   finishReason?: string;
+  /**
+   * True when the transport already streamed content/reasoning via
+   * `onDelta` during the request. The orchestrator uses this to
+   * avoid double-emitting the answer through `onChunk`.
+   */
+  streamed?: boolean;
+  /** Full reasoning text for this turn (if the model produced it). */
+  reasoning?: string;
 };
 
 /**

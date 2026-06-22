@@ -63,17 +63,27 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
     }
 
     iterations++;
+
+    // Build the onDelta bridge: content deltas -> onChunk, reasoning
+    // deltas -> onReasoning. When streaming, we fire these live; the
+    // post-turn emission below is then skipped (turn.streamed === true).
+    const onDelta = (input.onChunk || input.onReasoning)
+      ? (d: { content?: string; reasoning?: string }) => {
+          if (d.content) input.onChunk?.(d.content);
+          if (d.reasoning) input.onReasoning?.(d.reasoning);
+        }
+      : undefined;
+
     const turn = await input.transport.sendTurn({
       messages,
       tools: wireTools,
       reasoningEffort: input.reasoningEffort,
       signal: input.signal,
+      onDelta,
     });
 
     usage.tokensIn += turn.tokensIn;
     usage.tokensOut += turn.tokensOut;
-    // Prefer the backend's real cost (e.g. OpenRouter's usage.cost) when
-    // it reports one; fall back to the transport's list-price estimate.
     usage.costUsd +=
       typeof turn.costUsd === 'number'
         ? turn.costUsd
@@ -82,7 +92,9 @@ export async function runAgent(input: AgentRunInput): Promise<AgentRunResult> {
 
     const content = typeof turn.message.content === 'string' ? turn.message.content : '';
     if (content) {
-      input.onChunk?.(content);
+      // Only emit the full content when the transport didn't already
+      // stream it incrementally via onDelta.
+      if (!turn.streamed) input.onChunk?.(content);
       fullText.push(content);
     }
 
