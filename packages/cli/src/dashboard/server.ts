@@ -55,7 +55,17 @@ export async function startDashboardServer(opts: StartOptions): Promise<Dashboar
     });
   });
 
+  // The dashboard is a background helper for an interactive REPL: it must
+  // never keep the Node event loop alive on its own. Without this, a single
+  // Ctrl+C (which Ink delivers as a keystroke, not a signal) tears down the
+  // UI but the listening socket + any browser keep-alive connections leave
+  // the process hanging until a *second* Ctrl+C lands as a real SIGINT.
+  // Unref'ing the server handle and every connection socket lets the
+  // process exit as soon as the REPL's own handles are gone.
+  server.on('connection', (socket) => socket.unref());
+
   const port = await listen(server, host, opts.port ?? 4319);
+  server.unref();
   const url = `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`;
   return {
     server,
@@ -63,6 +73,9 @@ export async function startDashboardServer(opts: StartOptions): Promise<Dashboar
     port,
     close: () =>
       new Promise<void>((resolve) => {
+        // Force-close keep-alive connections so close() resolves promptly
+        // instead of waiting for browsers to drop their sockets.
+        server.closeAllConnections?.();
         server.close(() => resolve());
       }),
   };

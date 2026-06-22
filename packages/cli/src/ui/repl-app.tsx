@@ -1568,6 +1568,14 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     // mode/wizard state.
     if (key.ctrl && char === 'c') {
       if (busy) abortRef.current?.abort();
+      // Release the dashboard port right away. The server is already
+      // unref'd so it won't block exit, but closing here frees the port
+      // promptly for the next launch.
+      const dash = dashboardRef.current;
+      if (dash) {
+        dashboardRef.current = null;
+        void dash.close().catch(() => {});
+      }
       exit();
       return;
     }
