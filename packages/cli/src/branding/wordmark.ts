@@ -20,7 +20,7 @@ export const WORDMARK_SMALL = String.raw`
   ╚═╝╚═╝═╩╝╚═╝  ╩╚═╚═╝╚═╝ ╩ ╚═╝╩╚═
 `.trimEnd();
 
-export const WORDMARK_TAGLINE = 'route smarter. ship faster.';
+export const WORDMARK_TAGLINE = 'route smarter. build faster.';
 
 /** Used in headers and prompt-line prefixes. */
 export const BRAND_GLYPH = '◢◤';

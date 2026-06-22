@@ -23,7 +23,7 @@ export async function runCli(argv: string[]): Promise<void> {
   const program = new Command();
   program
     .name('coderouter')
-    .description(`${BRAND_NAME} - route smarter. ship faster.`)
+    .description(`${BRAND_NAME} - route smarter. build faster.`)
     .version('0.1.0');
 
   // Default (no subcommand) -> REPL

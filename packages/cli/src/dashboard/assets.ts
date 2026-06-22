@@ -600,7 +600,7 @@ export const INDEX_HTML = /* html */ `<!DOCTYPE html>
       <div class="nav-item" data-view="models"><span class="dot"></span>Models</div>
       <div class="nav-item" data-view="settings"><span class="dot"></span>Settings</div>
       <div class="spacer"></div>
-      <div class="footer">Local · 127.0.0.1<br/>route smarter. ship faster.</div>
+      <div class="footer">Local · 127.0.0.1<br/>route smarter. build faster.</div>
     </aside>
     <main class="main"><div id="view"></div></main>
   </div>

@@ -1,6 +1,6 @@
 # coderouter-cli
 
-**Route smarter. Ship faster.** CodeRouter is a coding-agent orchestration layer: it classifies each task by its *cognitive shape*, picks the best model from the providers you've enabled, runs edits safely in a git-worktree sandbox, validates the result, and remembers what works on your repo.
+**Route smarter. Build faster.** CodeRouter is a coding-agent orchestration layer: it classifies each task by its *cognitive shape*, picks the best model from the providers you've enabled, runs edits safely in a git-worktree sandbox, validates the result, and remembers what works on your repo.
 
 It works with your existing **Claude Code** / **Codex** CLI, or with any API key — **OpenAI, Anthropic, OpenRouter, DeepSeek, Groq** — via a built-in first-party coding agent.
 
