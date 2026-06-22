@@ -268,6 +268,39 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; }
 .tab { padding: 4px 12px; border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 500; }
 .tab.active { background: var(--bg); color: var(--text); }
 
+/* Marketplace / plugins */
+.plugin-toolbar { display: flex; gap: 10px; align-items: center; margin: 4px 0 20px; flex-wrap: wrap; }
+.plugin-search { flex: 1 1 280px; width: auto; }
+.plugin-layout { display: grid; grid-template-columns: 168px 1fr; gap: 26px; align-items: start; }
+.cat-list { display: flex; flex-direction: column; gap: 1px; position: sticky; top: 18px; }
+.cat-item { padding: 6px 11px; border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.cat-item:hover { background: var(--bg-elev-2); color: var(--text); }
+.cat-item.active { background: var(--bg-elev-2); color: var(--text); font-weight: 600; }
+.plugin-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.plugin-card { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 15px 17px; display: flex; flex-direction: column; gap: 9px; cursor: pointer; transition: border-color .15s ease; min-height: 132px; }
+.plugin-card:hover { border-color: var(--muted); }
+.plugin-card .prow { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.plugin-card .prow.bottom { margin-top: auto; align-items: flex-end; }
+.plugin-card .pname { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.plugin-card .pdesc { color: var(--muted); font-size: 12.5px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.plugin-card .pmeta { display: flex; flex-wrap: wrap; gap: 0; }
+.muted-sm { color: var(--muted-2); font-size: 12px; }
+.modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
+.modal { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 12px; max-width: 580px; width: 100%; max-height: 86vh; overflow: auto; padding: 22px 26px 26px; }
+.modal h2 { margin: 0 0 4px; font-size: 18px; }
+.asset-line { display: flex; gap: 10px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--border); }
+.asset-line:first-of-type { border-top: none; }
+.asset-line .asset-kind { font-size: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; padding: 2px 7px; border-radius: 5px; border: 1px solid var(--border-strong); color: var(--muted); flex: 0 0 auto; }
+.asset-line .title { font-weight: 600; font-size: 13px; }
+.asset-line .key { color: var(--muted-2); font-size: 12px; margin-top: 3px; font-family: ui-monospace, Menlo, monospace; }
+.mp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.mp-row .mp-name { font-size: 12.5px; font-weight: 600; }
+.mp-add { display: flex; gap: 6px; margin-top: 10px; }
+.mp-add .input { width: 100%; flex: 1; min-width: 0; }
+.btn-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 5px; }
+.btn-x:hover { color: var(--danger); background: var(--bg-elev-2); }
+.chip.danger-chip { color: var(--danger); border-color: rgba(248,81,73,.4); }
+
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; }
@@ -314,6 +347,13 @@ let orCatalogLoading = false;
 let assets = null;          // { rules, skills, subagents, roots }
 let assetTab = 'rules';
 let assetEditor = null;     // { kind, item } when an editor is open, else null
+let pluginsData = null;     // { catalog, installedExtra, categories } once loaded
+let pluginQuery = '';
+let pluginCategory = '';    // '' = all categories
+let pluginScope = 'project';
+let pluginDetail = null;    // id of the plugin whose detail modal is open
+let pluginBusy = false;
+let pluginPreview = {};     // { [id]: ResolvedPlugin | { error } } lazy cache
 const SUBTASK_KINDS = ['architecture', 'feature', 'bugfix', 'refactor', 'test', 'docs', 'mechanical'];
 
 async function api(path, opts) {
@@ -1016,6 +1056,252 @@ async function delAsset(kind, ref) {
   } catch (e) { toast('Failed: ' + e.message); }
 }
 
+// --- Plugins / Marketplace -------------------------------------------
+// Plugins come from Claude Code marketplaces (default: anthropics'
+// official + community). Installing one resolves the plugin's agents +
+// skills and writes them into .coderouter/ via the customize layer.
+
+async function loadPlugins() { pluginsData = await api('/api/plugins'); }
+
+function allPlugins() {
+  if (!pluginsData) return [];
+  return (pluginsData.catalog || []).concat(pluginsData.orphans || []);
+}
+
+function pluginMatches(p, q) {
+  if (!q) return true;
+  const hay = (p.name + ' ' + p.description + ' ' + (p.category || '') + ' ' + (p.tags || []).join(' ') + ' ' + (p.author || '')).toLowerCase();
+  return q.toLowerCase().split(/\\s+/).filter(Boolean).every((t) => hay.includes(t));
+}
+
+function isInstalled(p) { return pluginScope === 'global' ? p.installedGlobal : p.installedProject; }
+
+function pluginCard(p) {
+  const installed = isInstalled(p);
+  const tags = (p.tags || []).slice(0, 3).map((t) => '<span class="chip">' + esc(t) + '</span>').join('');
+  return '<div class="plugin-card" data-plugin="' + esc(p.id) + '" data-mp="' + esc(p.marketplace || '') + '">' +
+    '<div class="prow"><div class="pname">' + esc(p.name) +
+      (installed ? '<span class="badge success">installed</span>' : '') + '</div></div>' +
+    '<div class="pdesc">' + esc(p.description || '') + '</div>' +
+    (tags ? '<div class="pmeta">' + tags + '</div>' : '') +
+    '<div class="prow bottom"><span class="muted-sm">' + esc(p.category || p.marketplace || '') + '</span>' +
+      '<button class="btn ' + (installed ? 'danger' : 'primary') + '" data-pinstall="' + esc(p.id) + '">' + (installed ? 'Uninstall' : 'Get') + '</button>' +
+    '</div></div>';
+}
+
+function assetLine(a) {
+  const name = a.type === 'rule' ? (a.description || a.id) : a.name;
+  const sub = a.type === 'rule'
+    ? ((a.globs && a.globs.length) ? a.globs.join(', ') : (a.alwaysApply ? 'always apply' : 'manual'))
+    : a.type === 'subagent'
+      ? [a.kind ? 'kind: ' + a.kind : '', a.effort, a.model].filter(Boolean).join(' · ')
+      : (a.description || '');
+  return '<div class="asset-line"><span class="asset-kind">' + esc(a.type) + '</span>' +
+    '<div style="min-width:0;flex:1"><div class="title">' + esc(name) + '</div>' +
+    (sub ? '<div class="key">' + esc(sub) + '</div>' : '') +
+    (a.body ? '<div class="asset-body">' + esc(a.body) + '</div>' : '') +
+    '</div></div>';
+}
+
+function skippedLabel(s) {
+  if (!s) return '';
+  const parts = [];
+  if (s.mcpServers) parts.push(s.mcpServers + ' MCP server' + (s.mcpServers > 1 ? 's' : ''));
+  if (s.commands) parts.push(s.commands + ' command' + (s.commands > 1 ? 's' : ''));
+  if (s.hooks) parts.push('hooks');
+  if (s.lspServers) parts.push('LSP server');
+  return parts.join(' · ');
+}
+
+function pluginModalShell(p, inner) {
+  return '<div class="modal-bg" data-modal-bg><div class="modal">' +
+    '<div class="page-head" style="align-items:flex-start;margin-bottom:8px"><div style="min-width:0">' +
+      '<h2>' + esc(p.name) + '</h2>' +
+      '<div class="muted-sm">' + esc(p.marketplace || '') + (p.author ? ' · by ' + esc(p.author) : '') +
+        (p.category ? ' · ' + esc(p.category) : '') + '</div></div>' +
+      '<button class="btn" data-modal-close>✕</button></div>' +
+    '<p class="intro" style="max-width:none">' + esc(p.description || '') + '</p>' +
+    inner + '</div></div>';
+}
+
+function pluginModalBody(p) {
+  const installedHere = isInstalled(p);
+  const where = [];
+  if (p.installedProject) where.push('project');
+  if (p.installedGlobal) where.push('global');
+  const prev = pluginPreview[p.id];
+
+  let inside;
+  if (!prev) {
+    inside = '<div class="section-title" style="margin-top:16px">What\\'s inside</div><div class="empty" style="padding:18px">Loading plugin contents…</div>';
+  } else if (prev.error) {
+    inside = '<div class="empty" style="padding:18px">Couldn\\'t read plugin: ' + esc(prev.error) + '</div>';
+  } else {
+    const assets = prev.assets || [];
+    const skipped = skippedLabel(prev.skipped);
+    inside = '<div class="section-title" style="margin-top:16px">What\\'s inside (' + assets.length + ' importable)</div>' +
+      (assets.length ? assets.map(assetLine).join('') : '<div class="empty" style="padding:18px">No agents or skills to import from this plugin.</div>') +
+      (skipped ? '<p class="muted-sm" style="margin-top:12px">Also ships (not run by CodeRouter yet): ' + esc(skipped) + '.</p>' : '');
+  }
+
+  const canInstall = !prev || prev.error || (prev.assets && prev.assets.length);
+  return pluginModalShell(p,
+    (where.length ? '<p class="muted-sm">Installed in: <strong>' + where.join('</strong>, <strong>') + '</strong></p>' : '') +
+    inside +
+    '<div class="editor-actions" style="margin-top:20px">' +
+      '<button class="btn" data-modal-close>Close</button>' +
+      (canInstall ? '<button class="btn ' + (installedHere ? 'danger' : 'primary') + '" data-modal-install="' + esc(p.id) + '">' +
+        (installedHere ? 'Uninstall from ' + pluginScope : 'Install to ' + pluginScope) + '</button>' : '') +
+    '</div>');
+}
+
+function paintPluginGrid() {
+  const wrap = $('#pgrid');
+  if (!wrap) return;
+  const list = allPlugins().filter((p) =>
+    (!pluginCategory || p.category === pluginCategory) && pluginMatches(p, pluginQuery));
+  wrap.innerHTML = '<div class="muted-sm" style="margin-bottom:10px">' + list.length + ' plugin' + (list.length === 1 ? '' : 's') + '</div>' +
+    (list.length
+      ? '<div class="plugin-grid">' + list.slice(0, 300).map(pluginCard).join('') + '</div>'
+      : '<div class="empty">No plugins match your search.</div>');
+  wrap.querySelectorAll('[data-plugin]').forEach((c) => c.addEventListener('click', (e) => {
+    if (e.target.closest('[data-pinstall]')) return;
+    openPluginDetail(c.dataset.plugin, c.dataset.mp);
+  }));
+  wrap.querySelectorAll('[data-pinstall]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation(); togglePlugin(b.dataset.pinstall);
+  }));
+}
+
+function marketplacePanel() {
+  const mps = (pluginsData && pluginsData.marketplaces) || [];
+  const rows = mps.map((m) => {
+    const err = m.error ? '<span class="chip danger-chip" title="' + esc(m.error) + '">error</span>' : '';
+    const rm = m.source === 'user' ? '<button class="btn-x" data-rm-mp="' + esc(m.name) + '" title="Remove">✕</button>' : '';
+    return '<div class="mp-row"><div style="min-width:0"><div class="mp-name">' + esc(m.name) + ' ' + err + '</div>' +
+      '<div class="muted-sm">' + esc(m.repo) + ' · ' + m.count + '</div></div>' + rm + '</div>';
+  }).join('');
+  return '<div class="section-title" style="margin:0 0 8px">Marketplaces</div>' + rows +
+    '<div class="mp-add"><input class="input" data-mp-repo placeholder="owner/repo" /><button class="btn" data-mp-add>Add</button></div>' +
+    '<button class="btn" data-mp-refresh style="margin-top:6px;width:100%">Refresh</button>';
+}
+
+function renderPlugins() {
+  const main = $('#view');
+  const d = pluginsData || { catalog: [], orphans: [], categories: [], marketplaces: [] };
+  const cats = ['All'].concat(d.categories || []);
+  const catList = cats.map((c) => {
+    const val = c === 'All' ? '' : c;
+    return '<div class="cat-item ' + (pluginCategory === val ? 'active' : '') + '" data-cat="' + esc(val) + '">' + esc(c) + '</div>';
+  }).join('');
+
+  main.innerHTML =
+    '<div class="page-head"><h1>Marketplace</h1>' +
+      '<div class="tabs">' +
+        '<div class="tab ' + (pluginScope === 'project' ? 'active' : '') + '" data-pscope="project">Project</div>' +
+        '<div class="tab ' + (pluginScope === 'global' ? 'active' : '') + '" data-pscope="global">Global</div>' +
+      '</div></div>' +
+    '<p class="intro">Browse <strong>Claude Code plugins</strong>. Installing one imports its agents &amp; skills as real, editable files in your <span class="mono">.coderouter/</span> (subagents + skills) that take effect immediately. Target scope: <strong>' + esc(pluginScope) + '</strong>.</p>' +
+    '<div class="plugin-toolbar">' +
+      '<input class="input plugin-search" data-psearch placeholder="Search plugins by name, tag, or description…" value="' + esc(pluginQuery) + '" />' +
+    '</div>' +
+    '<div class="plugin-layout"><div class="cat-list">' +
+        marketplacePanel() +
+        '<div class="section-title" style="margin:18px 0 8px">Categories</div>' + catList +
+      '</div><div id="pgrid"></div></div>' +
+    (pluginDetail ? pluginModalBody(allPlugins().find((x) => x.id === pluginDetail) || { id: pluginDetail, name: pluginDetail }) : '');
+
+  paintPluginGrid();
+
+  main.querySelectorAll('[data-pscope]').forEach((t) => t.addEventListener('click', () => {
+    pluginScope = t.dataset.pscope; renderPlugins();
+  }));
+  const search = main.querySelector('[data-psearch]');
+  if (search) search.addEventListener('input', (e) => { pluginQuery = e.target.value; paintPluginGrid(); });
+  main.querySelectorAll('[data-cat]').forEach((c) => c.addEventListener('click', () => {
+    pluginCategory = c.dataset.cat; renderPlugins();
+  }));
+  // Marketplace management
+  const addBtn = main.querySelector('[data-mp-add]');
+  const repoInput = main.querySelector('[data-mp-repo]');
+  if (addBtn && repoInput) {
+    const add = () => addMarketplace(repoInput.value.trim());
+    addBtn.addEventListener('click', add);
+    repoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  }
+  const refreshBtn = main.querySelector('[data-mp-refresh]');
+  if (refreshBtn) refreshBtn.addEventListener('click', refreshPlugins);
+  main.querySelectorAll('[data-rm-mp]').forEach((b) => b.addEventListener('click', () => removeMarketplace(b.dataset.rmMp)));
+  // Modal
+  const bg = main.querySelector('[data-modal-bg]');
+  if (bg) bg.addEventListener('click', (e) => { if (e.target === bg) { pluginDetail = null; renderPlugins(); } });
+  main.querySelectorAll('[data-modal-close]').forEach((b) => b.addEventListener('click', () => { pluginDetail = null; renderPlugins(); }));
+  const mi = main.querySelector('[data-modal-install]');
+  if (mi) mi.addEventListener('click', () => togglePlugin(mi.dataset.modalInstall));
+}
+
+async function openPluginDetail(id, marketplace) {
+  pluginDetail = id;
+  renderPlugins();
+  if (!pluginPreview[id]) {
+    try {
+      pluginPreview[id] = await api('/api/plugins/preview?id=' + encodeURIComponent(id) + (marketplace ? '&marketplace=' + encodeURIComponent(marketplace) : ''));
+    } catch (e) { pluginPreview[id] = { error: e.message }; }
+    if (pluginDetail === id) renderPlugins();
+  }
+}
+
+async function togglePlugin(id) {
+  const p = allPlugins().find((x) => x.id === id);
+  if (!p || pluginBusy) return;
+  const installed = isInstalled(p);
+  pluginBusy = true;
+  try {
+    const route = installed ? '/api/plugins/uninstall' : '/api/plugins/install';
+    const r = await api(route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, marketplace: p.marketplace, scope: pluginScope }) });
+    if (!installed && r && r.skipped && skippedLabel(r.skipped)) toast('Installed ' + p.name + ' → ' + pluginScope + ' (skipped: ' + skippedLabel(r.skipped) + ')');
+    else toast((installed ? 'Uninstalled ' : 'Installed ') + p.name + (installed ? '' : ' → ' + pluginScope));
+    await loadPlugins(); renderPlugins();
+  } catch (e) { toast('Failed: ' + e.message); }
+  finally { pluginBusy = false; }
+}
+
+async function refreshPlugins() {
+  if (pluginBusy) return;
+  pluginBusy = true;
+  toast('Refreshing marketplaces…');
+  try {
+    pluginsData = await api('/api/plugins/refresh', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    pluginPreview = {};
+    toast('Marketplaces refreshed');
+    renderPlugins();
+  } catch (e) { toast('Failed: ' + e.message); }
+  finally { pluginBusy = false; }
+}
+
+async function addMarketplace(repo) {
+  if (!repo) { toast('Enter owner/repo'); return; }
+  if (pluginBusy) return;
+  pluginBusy = true;
+  toast('Adding ' + repo + '…');
+  try {
+    await api('/api/plugins/marketplace', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ repo }) });
+    await loadPlugins(); toast('Added marketplace'); renderPlugins();
+  } catch (e) { toast('Failed: ' + e.message); }
+  finally { pluginBusy = false; }
+}
+
+async function removeMarketplace(name) {
+  if (pluginBusy) return;
+  if (!confirm('Remove marketplace ' + name + '?')) return;
+  pluginBusy = true;
+  try {
+    await api('/api/plugins/marketplace', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+    await loadPlugins(); toast('Removed ' + name); renderPlugins();
+  } catch (e) { toast('Failed: ' + e.message); }
+  finally { pluginBusy = false; }
+}
+
 async function loadUsage() { usage = await api('/api/usage'); }
 async function loadSettings() { settings = await api('/api/settings'); }
 
@@ -1027,7 +1313,16 @@ function setView(name) {
   else if (name === 'spending') renderSpending();
   else if (name === 'models') renderModels();
   else if (name === 'customize') renderCustomize();
+  else if (name === 'plugins') renderPluginsView();
   else if (name === 'settings') renderSettings();
+}
+
+async function renderPluginsView() {
+  if (!pluginsData) {
+    $('#view').innerHTML = '<div class="page-head"><h1>Marketplace</h1></div><div class="empty">Loading…</div>';
+    try { await loadPlugins(); } catch (e) { $('#view').innerHTML = '<div class="empty">Failed to load: ' + esc(e.message) + '</div>'; return; }
+  }
+  if (current === 'plugins') renderPlugins();
 }
 
 async function renderCustomize() {
@@ -1067,6 +1362,7 @@ export const INDEX_HTML = /* html */ `<!DOCTYPE html>
       <div class="nav-item" data-view="spending"><span class="dot"></span>Spending</div>
       <div class="nav-item" data-view="models"><span class="dot"></span>Models</div>
       <div class="nav-item" data-view="customize"><span class="dot"></span>Rules &amp; Skills</div>
+      <div class="nav-item" data-view="plugins"><span class="dot"></span>Marketplace</div>
       <div class="nav-item" data-view="settings"><span class="dot"></span>Settings</div>
       <div class="spacer"></div>
       <div class="footer">Local · 127.0.0.1<br/>route smarter. build faster.</div>

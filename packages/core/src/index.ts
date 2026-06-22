@@ -21,6 +21,7 @@ export * as catalog from './catalog/index.js';
 export * as agent from './agent/index.js';
 export * as models from './models/index.js';
 export * as customize from './customize/index.js';
+export * as plugins from './plugins/index.js';
 
 // Convenience top-level re-exports of the most commonly used symbols.
 // Mirrors what the CLI, MCP server, and eval harness import.
@@ -80,6 +81,15 @@ export { runValidators, summarize, detectProject } from './validate/index.js';
 export { scanContext } from './context/index.js';
 export { loadProjectMemory, projectMemoryToSystemPrompt } from './memory/index.js';
 export type { Rule, Skill, Subagent, AssetScope, AssetKind } from './customize/index.js';
+export type {
+  Plugin,
+  PluginAsset,
+  ResolvedPlugin,
+  Marketplace,
+  LoadedMarketplace,
+  InstalledPlugin,
+  InstallManifest,
+} from './plugins/index.js';
 export { detectClarifications } from './clarify/index.js';
 export { openStore, resolveDbPath } from './store/index.js';
 export { loadConfig } from './config/index.js';

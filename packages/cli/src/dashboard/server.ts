@@ -20,11 +20,13 @@ import {
   SETUP_PROVIDERS,
 } from '../ui/setup.js';
 import type { HostProvider } from '../ui/hosts.js';
-import { customize } from '@coderouter/core';
+import { customize, plugins } from '@coderouter/core';
 import { INDEX_HTML } from './assets.js';
 import {
   buildAssetsReport,
   buildOpenRouterCatalog,
+  buildPluginPreview,
+  buildPluginsReport,
   buildSettingsReport,
   buildUsageReport,
 } from './data.js';
@@ -132,6 +134,34 @@ async function handle(req: IncomingMessage, res: ServerResponse, cwd: string): P
     const body = await readJson(req);
     const scope = body.scope === 'global' ? 'global' : 'project';
     const handled = await handleAssetMutation(res, cwd, path, method, scope, body);
+    if (handled) return;
+  }
+
+  if (method === 'GET' && path === '/api/plugins') {
+    sendJson(res, 200, await buildPluginsReport(cwd));
+    return;
+  }
+
+  if (method === 'GET' && path === '/api/plugins/preview') {
+    const id = url.searchParams.get('id') ?? '';
+    const marketplace = url.searchParams.get('marketplace') ?? undefined;
+    if (!id) {
+      sendJson(res, 400, { error: 'id required' });
+      return;
+    }
+    sendJson(res, 200, await buildPluginPreview(id, marketplace));
+    return;
+  }
+
+  // Plugin install / uninstall / marketplace management — mutates disk.
+  if (path.startsWith('/api/plugins/')) {
+    if (!sameOrigin(req)) {
+      sendJson(res, 403, { error: 'cross-origin request rejected' });
+      return;
+    }
+    const body = await readJson(req);
+    const scope = body.scope === 'global' ? 'global' : 'project';
+    const handled = await handlePluginMutation(res, cwd, path, method, scope, body);
     if (handled) return;
   }
 
@@ -287,6 +317,91 @@ async function handleAssetMutation(
       await customize.deleteSubagent(cwd, scope, str(body.slug));
       return sendJson(res, 200, { ok: true }), true;
     }
+  }
+
+  return false;
+}
+
+/**
+ * Plugin + marketplace mutations:
+ *  - POST /api/plugins/install   { id, marketplace?, scope } -> resolve + install
+ *  - POST /api/plugins/uninstall { id, scope }
+ *  - POST /api/plugins/refresh   -> re-pull marketplaces, return report
+ *  - POST /api/plugins/marketplace   { repo, name? } -> add
+ *  - DELETE /api/plugins/marketplace { name } -> remove (user-added only)
+ */
+async function handlePluginMutation(
+  res: ServerResponse,
+  cwd: string,
+  path: string,
+  method: string,
+  scope: 'project' | 'global',
+  body: Record<string, unknown>,
+): Promise<boolean> {
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+
+  if (path === '/api/plugins/install' && method === 'POST') {
+    const id = str(body.id);
+    const marketplace = str(body.marketplace) || undefined;
+    if (!id) {
+      sendJson(res, 400, { error: 'id required' });
+      return true;
+    }
+    try {
+      const plugin = await plugins.findPlugin(id, marketplace);
+      if (!plugin) {
+        sendJson(res, 404, { error: `plugin not found: ${id}` });
+        return true;
+      }
+      const resolved = await plugins.resolvePlugin(plugin);
+      const record = await plugins.installPlugin(cwd, resolved, scope);
+      sendJson(res, 200, { ok: true, installed: record, skipped: resolved.skipped });
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) });
+    }
+    return true;
+  }
+
+  if (path === '/api/plugins/uninstall' && method === 'POST') {
+    const id = str(body.id);
+    if (!id) {
+      sendJson(res, 400, { error: 'id required' });
+      return true;
+    }
+    const removed = await plugins.uninstallPlugin(cwd, id, scope);
+    sendJson(res, 200, { ok: true, removed });
+    return true;
+  }
+
+  if (path === '/api/plugins/refresh' && method === 'POST') {
+    sendJson(res, 200, await buildPluginsReport(cwd, { refresh: true }));
+    return true;
+  }
+
+  if (path === '/api/plugins/marketplace' && method === 'POST') {
+    const repo = str(body.repo);
+    if (!repo) {
+      sendJson(res, 400, { error: 'repo required' });
+      return true;
+    }
+    try {
+      const mp = await plugins.addMarketplace(repo, str(body.name) || undefined);
+      sendJson(res, 200, { ok: true, marketplace: mp });
+    } catch (e) {
+      sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) });
+    }
+    return true;
+  }
+
+  if (path === '/api/plugins/marketplace' && method === 'DELETE') {
+    const name = str(body.name);
+    if (!name) {
+      sendJson(res, 400, { error: 'name required' });
+      return true;
+    }
+    const removed = await plugins.removeMarketplace(name);
+    sendJson(res, 200, { ok: true, removed });
+    return true;
   }
 
   return false;

@@ -21,9 +21,10 @@ import {
   defaultProviders,
   models,
   openStore,
+  plugins,
   resolveDbPath,
 } from '@coderouter/core';
-import type { Rule, Skill, Subagent } from '@coderouter/core';
+import type { InstalledPlugin, Plugin, ResolvedPlugin, Rule, Skill, Subagent } from '@coderouter/core';
 import type { RunRecord } from '@coderouter/core/store';
 import {
   CREDENTIALS_PATH,
@@ -193,6 +194,99 @@ export async function buildAssetsReport(cwd: string): Promise<AssetsReport> {
       global: customize.scopeRoot('global', cwd),
     },
   };
+}
+
+/** A catalog plugin (marketplace entry) annotated with install state. */
+export type PluginListItem = Pick<
+  Plugin,
+  'id' | 'name' | 'description' | 'author' | 'category' | 'tags' | 'homepage' | 'marketplace'
+> & {
+  installedProject: boolean;
+  installedGlobal: boolean;
+};
+
+export type PluginsReport = {
+  catalog: PluginListItem[];
+  marketplaces: Array<{
+    name: string;
+    repo: string;
+    source: 'builtin' | 'user';
+    owner?: string;
+    count: number;
+    error?: string;
+  }>;
+  categories: string[];
+  /** Installed plugins no longer found in any marketplace (orphans). */
+  orphans: PluginListItem[];
+};
+
+/**
+ * Build the marketplace view: catalog from all registered marketplaces
+ * (cloned blobless on first read) + per-scope install state. Plugin
+ * assets are NOT resolved here — that happens lazily on preview/install.
+ */
+export async function buildPluginsReport(
+  cwd: string,
+  opts: { refresh?: boolean } = {},
+): Promise<PluginsReport> {
+  const [{ plugins: catalogPlugins, marketplaces }, { project, global }] = await Promise.all([
+    plugins.loadCatalog(opts),
+    plugins.loadAllInstalled(cwd),
+  ]);
+  const inProject = new Set(project.map((p) => p.id));
+  const inGlobal = new Set(global.map((p) => p.id));
+
+  const toItem = (p: Plugin): PluginListItem => ({
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    author: p.author,
+    category: p.category,
+    tags: p.tags,
+    homepage: p.homepage,
+    marketplace: p.marketplace,
+    installedProject: inProject.has(p.id),
+    installedGlobal: inGlobal.has(p.id),
+  });
+
+  const catalog = catalogPlugins.map(toItem);
+  const known = new Set(catalogPlugins.map((p) => p.id));
+
+  // Installed plugins that no longer appear in any marketplace.
+  const orphanMap = new Map<string, PluginListItem>();
+  const addOrphan = (rec: InstalledPlugin, scope: 'project' | 'global') => {
+    if (known.has(rec.id)) return;
+    const item =
+      orphanMap.get(rec.id) ??
+      ({
+        id: rec.id,
+        name: rec.name,
+        description: `Installed from ${rec.marketplace}`,
+        category: 'Installed',
+        tags: [],
+        marketplace: rec.marketplace,
+        installedProject: false,
+        installedGlobal: false,
+      } as PluginListItem);
+    if (scope === 'project') item.installedProject = true;
+    else item.installedGlobal = true;
+    orphanMap.set(rec.id, item);
+  };
+  for (const r of project) addOrphan(r, 'project');
+  for (const r of global) addOrphan(r, 'global');
+
+  const categories = [...new Set(catalog.map((p) => p.category).filter(Boolean))].sort() as string[];
+  return { catalog, marketplaces, categories, orphans: [...orphanMap.values()] };
+}
+
+/** Resolve a single plugin's assets (clones its repo) for the detail modal. */
+export async function buildPluginPreview(
+  id: string,
+  marketplace: string | undefined,
+): Promise<ResolvedPlugin | { error: string }> {
+  const plugin = await plugins.findPlugin(id, marketplace);
+  if (!plugin) return { error: `plugin not found: ${id}` };
+  return plugins.resolvePlugin(plugin);
 }
 
 const HEATMAP_DAYS = 371; // 53 weeks, aligned to whole weeks in the UI.
