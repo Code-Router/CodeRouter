@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, type SettingsReport } from '../lib/api';
 import { Section, Spinner, cls } from '../components/common';
+import { useTheme, type ThemePref } from '../lib/theme';
 
 export function SettingsPage(): React.ReactElement {
   const [data, setData] = useState<SettingsReport | null>(null);
@@ -38,6 +39,10 @@ export function SettingsPage(): React.ReactElement {
 
   return (
     <div className="max-w-3xl">
+      <Section title="Appearance">
+        <Appearance />
+      </Section>
+
       <Section title="Cloud providers">
         <div className="space-y-2">
           {data.providers.map((p) => (
@@ -97,6 +102,34 @@ export function SettingsPage(): React.ReactElement {
           <div>database: {data.paths.db}</div>
         </div>
       </Section>
+    </div>
+  );
+}
+
+function Appearance(): React.ReactElement {
+  const { pref, setPref } = useTheme();
+  const opts: Array<{ id: ThemePref; label: string }> = [
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+    { id: 'system', label: 'System' },
+  ];
+  return (
+    <div className="card flex items-center gap-3">
+      <span className="text-sm text-muted">Theme</span>
+      <div className="inline-flex overflow-hidden rounded-md border border-border">
+        {opts.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => setPref(o.id)}
+            className={cls(
+              'px-3 py-1.5 text-sm transition-colors',
+              pref === o.id ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

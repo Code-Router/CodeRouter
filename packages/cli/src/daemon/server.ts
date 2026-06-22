@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { LoopEvent, LoopSpec, LoopPreset } from '@coderouter/core';
-import { PRESETS, discoverVerifiers, generateLoopSpec, validateLoopSpec } from '@coderouter/core';
+import type { ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode } from '@coderouter/core';
+import { PRESETS, discoverVerifiers, generateLoopSpec, openStore, resolveDbPath, validateLoopSpec } from '@coderouter/core';
 import { CLI_VERSION } from '../version.js';
 import { handle as handleDashboard, readJson, sendJson } from '../dashboard/server.js';
-import { buildExecutionEnv } from '../runtime.js';
+import { buildExecutionEnv, executeRun } from '../runtime.js';
 import { buildAllLoops, buildChatDetail, buildChatsReport, buildProjectsReport } from './data.js';
 import {
   clearDaemonInfo,
@@ -187,6 +188,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
     return sendJson(res, detail ? 200 : 404, detail ?? { error: 'not found' });
   }
 
+  // POST /api/chat/send -> run one conversation turn, streaming the
+  // model's answer back as SSE-style chunks. Reuses the same agent
+  // execution path as the CLI so chats route, persist, and bill identically.
+  if (method === 'POST' && path === '/api/chat/send') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handleChatSend(req, res, cwd);
+  }
+
   // ---- loops ------------------------------------------------------
   if (path === '/api/loops' || path.startsWith('/api/loops/')) {
     const handled = await handleLoops(req, res, cwd, method, path, url);
@@ -195,6 +204,81 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
 
   // ---- delegate everything else to the dashboard -----------------
   await handleDashboard(req, res, cwd);
+}
+
+const VALID_MODES = new Set<Mode>(['plan', 'masterplan', 'agent', 'debug', 'review', 'orchestrate']);
+const VALID_EFFORTS = new Set<Effort>(['low', 'medium', 'high', 'max']);
+
+/**
+ * Run a single chat turn and stream the answer. We open an SSE-style
+ * response (text/event-stream) and forward every adapter chunk as it
+ * lands, then a terminal `done` event with the routed model + usage.
+ * `executeRun` persists both the user prompt and the assistant reply to
+ * the chat store, so the conversation shows up in history automatically.
+ */
+async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonCwd: string): Promise<void> {
+  const body = await readJson(req);
+  const project = String(body.cwd ?? daemonCwd);
+  const prompt = String(body.prompt ?? '').trim();
+  const sessionId = String(body.sessionId ?? randomUUID());
+  const mode: Mode = VALID_MODES.has(body.mode as Mode) ? (body.mode as Mode) : 'agent';
+  const effort: Effort | undefined = VALID_EFFORTS.has(body.effort as Effort) ? (body.effort as Effort) : undefined;
+
+  res.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-store',
+    connection: 'keep-alive',
+    'access-control-allow-origin': req.headers.origin && req.headers.origin !== 'null' ? req.headers.origin : '*',
+  });
+  const send = (o: unknown): void => {
+    try {
+      res.write(`data: ${JSON.stringify(o)}\n\n`);
+    } catch {
+      // client gone
+    }
+  };
+
+  if (!prompt) {
+    send({ type: 'error', error: 'prompt required' });
+    res.end();
+    return;
+  }
+
+  send({ type: 'start', sessionId });
+  try {
+    // Prior turns give the agent multi-turn memory. Read them before the
+    // run persists this turn.
+    const store = await openStore(resolveDbPath(project));
+    const prior = store.chats.messages(sessionId).map((m) => ({ role: m.role, content: m.text }) as ChatMessage);
+    store.db.close();
+
+    const { output } = await executeRun({
+      cwd: project,
+      prompt,
+      mode,
+      effort,
+      sessionId,
+      apply: false,
+      onChunk: (text) => send({ type: 'chunk', text }),
+      priorMessages: prior,
+    });
+
+    const route = (output.routes ?? [])[0];
+    send({
+      type: 'done',
+      sessionId,
+      text: output.text ?? '',
+      runId: output.runId,
+      route: route ? `${route.via ?? route.provider},${route.model}` : null,
+      costUsd: output.costUsd,
+      tokensIn: output.tokensIn,
+      tokensOut: output.tokensOut,
+      diff: output.diff ?? null,
+    });
+  } catch (e) {
+    send({ type: 'error', error: e instanceof Error ? e.message : String(e) });
+  }
+  res.end();
 }
 
 function openSse(req: IncomingMessage, res: ServerResponse): void {

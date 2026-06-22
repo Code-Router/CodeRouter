@@ -1,47 +1,33 @@
 import React, { useEffect, useState } from 'react';
 import {
   Blocks,
-  FolderGit2,
+  Folder,
   LayoutDashboard,
   type LucideIcon,
-  MessagesSquare,
   RefreshCw,
   Settings as SettingsIcon,
   SquarePen,
 } from 'lucide-react';
-import { api, isMac, type ProjectSummary } from './lib/api';
+import { api, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
 import { LoopEventsProvider, useDaemonConnected } from './lib/events';
 import { cls } from './components/common';
 import { Logo } from './components/Logo';
 import { LoopsPage } from './pages/Loops';
-import { ProjectsPage } from './pages/Projects';
-import { ChatsPage } from './pages/Chats';
+import { ChatPage } from './pages/Chat';
 import { OverviewArea } from './pages/OverviewArea';
 import { PluginsPage } from './pages/Plugins';
 import { SettingsArea } from './pages/SettingsArea';
 
-export type Nav = 'overview' | 'newchat' | 'projects' | 'chats' | 'loops' | 'plugins' | 'settings';
+export type Nav = 'overview' | 'chat' | 'loops' | 'plugins' | 'settings';
 
-type NavItem = { id: Nav; label: string; icon: LucideIcon };
+type TopItem = { id: Nav; label: string; icon: LucideIcon; action?: boolean };
 
-const MAIN_NAV: NavItem[] = [
+const TOP_NAV: TopItem[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { id: 'newchat', label: 'New chat', icon: SquarePen },
-  { id: 'projects', label: 'Projects', icon: FolderGit2 },
-  { id: 'chats', label: 'Chats', icon: MessagesSquare },
+  { id: 'chat', label: 'New chat', icon: SquarePen, action: true },
   { id: 'loops', label: 'Loops', icon: RefreshCw },
   { id: 'plugins', label: 'Plugins', icon: Blocks },
 ];
-
-const TITLES: Record<Nav, string> = {
-  overview: 'Overview',
-  newchat: 'New chat',
-  projects: 'Projects',
-  chats: 'Chats',
-  loops: 'Loops',
-  plugins: 'Plugins',
-  settings: 'Settings',
-};
 
 export function App(): React.ReactElement {
   return (
@@ -55,6 +41,9 @@ function Shell(): React.ReactElement {
   const [nav, setNav] = useState<Nav>('overview');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [project, setProject] = useState<string | null>(null);
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [chatsKey, setChatsKey] = useState(0);
   const connected = useDaemonConnected();
   const mac = isMac();
 
@@ -68,33 +57,29 @@ function Shell(): React.ReactElement {
       .catch(() => {});
   }, []);
 
-  // "New chat" has no compose flow in the desktop app yet; route to the
-  // conversation browser for now.
-  const go = (id: Nav): void => setNav(id === 'newchat' ? 'chats' : id);
+  useEffect(() => {
+    if (!project) return;
+    void api
+      .chats(project)
+      .then((r) => setChats(r.chats))
+      .catch(() => setChats([]));
+  }, [project, chatsKey]);
 
-  const renderNavButton = (n: NavItem): React.ReactElement => {
-    const Icon = n.icon;
-    const isAction = n.id === 'newchat';
-    const active = !isAction && nav === n.id;
-    return (
-      <button
-        key={n.id}
-        onClick={() => go(n.id)}
-        className={cls(
-          'no-drag mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
-          active ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
-        )}
-      >
-        <Icon className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
-        {n.label}
-      </button>
-    );
+  const newChat = (): void => {
+    setChatId('new');
+    setNav('chat');
   };
+  const openChat = (id: string): void => {
+    setChatId(id);
+    setNav('chat');
+  };
+
+  const titleBar = mac ? 'pt-[44px]' : '';
 
   return (
     <div className="flex h-full">
-      <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-panel">
-        <div className={cls('drag flex items-center gap-2 px-3 pb-3', mac ? 'pt-9' : 'pt-3')}>
+      <aside className="flex w-52 shrink-0 flex-col border-r border-border bg-panel">
+        <div className={cls('drag flex items-center gap-2 px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
           <Logo className="h-6 w-6 rounded-md" />
           <div>
             <div className="text-sm font-semibold leading-tight">CodeRouter</div>
@@ -102,7 +87,58 @@ function Shell(): React.ReactElement {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-2 pt-1">{MAIN_NAV.map(renderNavButton)}</nav>
+        <nav className="flex-1 overflow-y-auto px-2 pb-2">
+          {TOP_NAV.map((n) => {
+            const Icon = n.icon;
+            const active = n.id === 'chat' ? nav === 'chat' : nav === n.id;
+            return (
+              <button
+                key={n.id}
+                onClick={() => (n.id === 'chat' ? newChat() : setNav(n.id))}
+                className={cls(
+                  'no-drag mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+                  active ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+                )}
+              >
+                <Icon className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
+                {n.label}
+              </button>
+            );
+          })}
+
+          <SectionLabel>Projects</SectionLabel>
+          {projects.length === 0 && <Empty>No projects yet</Empty>}
+          {projects.map((p) => (
+            <button
+              key={p.cwd}
+              onClick={() => setProject(p.cwd)}
+              title={p.cwd}
+              className={cls(
+                'no-drag mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+                project === p.cwd ? 'bg-panel2 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+              )}
+            >
+              <Folder className="h-[14px] w-[14px] shrink-0" strokeWidth={2} />
+              <span className="truncate">{p.name}</span>
+            </button>
+          ))}
+
+          <SectionLabel>Chats</SectionLabel>
+          {chats.length === 0 && <Empty>No chats</Empty>}
+          {chats.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => openChat(c.id)}
+              title={c.title}
+              className={cls(
+                'no-drag mb-0.5 flex w-full items-center rounded-md px-2 py-1.5 text-left text-[13px] transition-colors',
+                nav === 'chat' && chatId === c.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+              )}
+            >
+              <span className="truncate">{c.title || 'Untitled'}</span>
+            </button>
+          ))}
+        </nav>
 
         <div className="px-2 pb-2">
           <button
@@ -123,29 +159,26 @@ function Shell(): React.ReactElement {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        <header
-          className={cls(
-            'drag flex items-center justify-between border-b border-border px-5',
-            mac ? 'pb-2.5 pt-7' : 'py-2.5',
+        <header className={cls('drag flex items-center justify-between border-b border-border px-5 pb-3', titleBar || 'pt-3')}>
+          <h1 className="text-sm font-semibold">{nav === 'chat' ? 'Chat' : TOP_NAV.find((n) => n.id === nav)?.label ?? 'Settings'}</h1>
+          {(nav === 'loops' || nav === 'chat') && project && (
+            <span className="no-drag truncate text-xs text-muted">{projects.find((p) => p.cwd === project)?.name}</span>
           )}
-        >
-          <h1 className="text-sm font-semibold">{TITLES[nav]}</h1>
-          <div className="no-drag">
-            <ProjectPicker projects={projects} value={project} onChange={setProject} />
-          </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {nav === 'overview' && <OverviewArea />}
-          {nav === 'projects' && (
-            <ProjectsPage
+          {nav === 'chat' && (
+            <ChatPage
+              chatId={chatId}
+              project={project}
               projects={projects}
-              onOpen={(cwd) => {
-                setProject(cwd);
-                setNav('loops');
+              onProjectChange={setProject}
+              onSessionCreated={(id) => {
+                setChatId(id);
+                setChatsKey((k) => k + 1);
               }}
             />
           )}
-          {nav === 'chats' && <ChatsPage project={project} />}
           {nav === 'loops' && <LoopsPage projects={projects} project={project} />}
           {nav === 'plugins' && <PluginsPage />}
           {nav === 'settings' && <SettingsArea />}
@@ -155,23 +188,10 @@ function Shell(): React.ReactElement {
   );
 }
 
-function ProjectPicker({
-  projects,
-  value,
-  onChange,
-}: {
-  projects: ProjectSummary[];
-  value: string | null;
-  onChange: (cwd: string) => void;
-}): React.ReactElement {
-  if (projects.length === 0) return <span className="text-xs text-muted">no projects yet</span>;
-  return (
-    <select className="input max-w-xs" value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
-      {projects.map((p) => (
-        <option key={p.cwd} value={p.cwd}>
-          {p.name}
-        </option>
-      ))}
-    </select>
-  );
+function SectionLabel({ children }: { children: React.ReactNode }): React.ReactElement {
+  return <div className="px-2 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-muted">{children}</div>;
+}
+
+function Empty({ children }: { children: React.ReactNode }): React.ReactElement {
+  return <div className="px-2 py-1 text-xs text-muted/70">{children}</div>;
 }

@@ -117,6 +117,62 @@ export const api = {
     req('POST', '/api/settings/preferred-model', { tier, provider, model }),
 };
 
+export type ChatStreamEvent =
+  | { type: 'start'; sessionId: string }
+  | { type: 'chunk'; text: string }
+  | {
+      type: 'done';
+      sessionId: string;
+      text: string;
+      runId: string;
+      route: string | null;
+      costUsd: number;
+      tokensIn: number;
+      tokensOut: number;
+      diff: string | null;
+    }
+  | { type: 'error'; error: string };
+
+/**
+ * Run one chat turn, streaming the answer. POSTs to the daemon and reads
+ * the text/event-stream body, parsing `data:` frames into typed events.
+ */
+export async function sendChat(
+  body: { cwd: string; sessionId: string; prompt: string; mode?: string; effort?: string },
+  onEvent: (e: ChatStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const base = await resolveBase();
+  const res = await fetch(`${base}/api/chat/send`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const frames = buf.split('\n\n');
+    buf = frames.pop() ?? '';
+    for (const frame of frames) {
+      const line = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) continue;
+      const json = line.slice(5).trim();
+      if (!json) continue;
+      try {
+        onEvent(JSON.parse(json) as ChatStreamEvent);
+      } catch {
+        /* ignore malformed frame */
+      }
+    }
+  }
+}
+
 /** Subscribe to live loop events over SSE. Returns an unsubscribe fn. */
 export async function subscribeLoopEvents(onEvent: (e: LoopEvent | { type: 'hello' }) => void): Promise<() => void> {
   const base = await resolveBase();

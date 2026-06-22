@@ -2,14 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens as space-separated RGB channels so Tailwind's alpha
+   modifiers (e.g. bg-accent/20) keep working. Dark is the default; the
+   `.light` class on <html> swaps the palette. */
 :root {
+  --c-bg: 11 13 18;
+  --c-panel: 18 21 28;
+  --c-panel2: 23 27 36;
+  --c-border: 35 42 54;
+  --c-muted: 139 147 167;
+  --c-text: 230 233 240;
+  --c-accent: 91 140 255;
+  --c-ok: 63 185 80;
+  --c-warn: 210 153 34;
+  --c-bad: 248 81 73;
   color-scheme: dark;
 }
 
-/* Global UI scale. Tailwind sizing/spacing is rem-based, so shrinking the
-   root font size scales the whole app down proportionally. */
+.light {
+  --c-bg: 247 248 250;
+  --c-panel: 255 255 255;
+  --c-panel2: 240 242 245;
+  --c-border: 223 227 234;
+  --c-muted: 92 100 115;
+  --c-text: 26 29 36;
+  --c-accent: 59 110 230;
+  --c-ok: 26 127 55;
+  --c-warn: 154 103 0;
+  --c-bad: 207 34 46;
+  color-scheme: light;
+}
+
+/* Global UI scale. Tailwind sizing/spacing is rem-based, so the root font
+   size scales the whole app proportionally. */
 html {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 html,
@@ -19,17 +46,8 @@ body,
   margin: 0;
 }
 
-/* Electron draggable title bar regions (macOS inset traffic lights). */
-.drag {
-  -webkit-app-region: drag;
-}
-.no-drag {
-  -webkit-app-region: no-drag;
-}
-
 body {
-  background: theme('colors.bg');
-  color: theme('colors.text');
+  @apply bg-bg text-text;
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -40,8 +58,16 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3140;
+  @apply bg-border;
   border-radius: 6px;
+}
+
+/* Electron draggable title bar regions (macOS inset traffic lights). */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
 }
 
 @layer components {
