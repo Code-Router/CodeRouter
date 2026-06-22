@@ -36,7 +36,7 @@
 /* Global UI scale. Tailwind sizing/spacing is rem-based, so the root font
    size scales the whole app proportionally. */
 html {
-  font-size: 14px;
+  font-size: 15px;
 }
 
 html,

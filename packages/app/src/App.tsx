@@ -103,12 +103,8 @@ function Shell(): React.ReactElement {
   return (
     <div className="flex h-full">
       <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-panel">
-        <div className={cls('drag flex items-center gap-2 px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
-          <Logo className="h-6 w-6 rounded-md" />
-          <div>
-            <div className="text-sm font-semibold leading-tight">CodeRouter</div>
-            <div className="text-[9px] uppercase tracking-widest text-muted">Studio</div>
-          </div>
+        <div className={cls('drag flex items-center px-3 pb-3', mac ? 'pt-[44px]' : 'pt-4')}>
+          <Logo className="h-8 w-8" />
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
@@ -177,17 +173,14 @@ function Shell(): React.ReactElement {
           <button
             onClick={() => setNav('settings')}
             className={cls(
-              'no-drag mb-1 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+              'no-drag flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
               nav === 'settings' ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
             )}
           >
             <SettingsIcon className="h-[15px] w-[15px] shrink-0" strokeWidth={2} />
             Settings
+            {!connected && <span className="ml-auto h-2 w-2 rounded-full bg-bad" title="daemon offline" />}
           </button>
-          <div className="flex items-center gap-2 border-t border-border px-2 pt-2 text-[11px] text-muted">
-            <span className={cls('h-2 w-2 rounded-full', connected ? 'bg-ok' : 'bg-bad')} />
-            {connected ? 'daemon connected' : 'daemon offline'}
-          </div>
         </div>
       </aside>
 
