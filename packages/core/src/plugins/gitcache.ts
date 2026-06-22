@@ -1,15 +1,12 @@
 import { execFile } from 'node:child_process';
 import { mkdir, rm, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { coderouterHome } from '../paths.js';
 
 const exec = promisify(execFile);
 
-/** CodeRouter's home dir (overridable for tests via CODEROUTER_HOME). */
-export function coderouterHome(): string {
-  return process.env.CODEROUTER_HOME || join(homedir(), '.coderouter');
-}
+export { coderouterHome };
 
 function cacheRoot(): string {
   return join(coderouterHome(), 'plugins-cache');

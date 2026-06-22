@@ -91,7 +91,14 @@ export type {
   InstallManifest,
 } from './plugins/index.js';
 export { detectClarifications } from './clarify/index.js';
-export { openStore, resolveDbPath } from './store/index.js';
+export {
+  openStore,
+  resolveDbPath,
+  registerProject,
+  listProjects,
+  discoverProjects,
+} from './store/index.js';
+export type { ProjectEntry } from './store/index.js';
 export { loadConfig } from './config/index.js';
 export { runMode } from './modes/dispatch.js';
 export {

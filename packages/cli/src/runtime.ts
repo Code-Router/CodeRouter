@@ -7,6 +7,7 @@ import {
   observationsFromRuns,
   openStore,
   ProviderRegistry,
+  registerProject,
   resolveDbPath,
   runMode,
 } from '@coderouter/core';
@@ -143,6 +144,9 @@ export async function executeRun(opts: CliRunOpts): Promise<{
     await registry.loadOpenRouterCatalog().catch(() => undefined);
   }
   const store = await openStore(resolveDbPath(opts.cwd));
+  // Track this repo machine-wide so the dashboard can aggregate usage
+  // across every CodeRouter project on this computer.
+  registerProject(opts.cwd);
   const bias = deriveMemoryBias(store, { taskType: 'feature' });
   // Hybrid refinement: blend benchmark priors with how each model has
   // actually performed on this user's repos (bounded + shrinkage so it

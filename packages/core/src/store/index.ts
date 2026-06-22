@@ -9,6 +9,7 @@ export * from './db.js';
 export * from './facts.js';
 export * from './learned.js';
 export * from './migrations.js';
+export * from './projects.js';
 export * from './runs.js';
 export * from './sessions.js';
 

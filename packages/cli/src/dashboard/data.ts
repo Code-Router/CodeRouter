@@ -19,9 +19,12 @@ import {
   agent,
   customize,
   defaultProviders,
+  discoverProjects,
+  listProjects,
   models,
   openStore,
   plugins,
+  registerProject,
   resolveDbPath,
 } from '@coderouter/core';
 import type { InstalledPlugin, Plugin, ResolvedPlugin, Rule, Skill, Subagent } from '@coderouter/core';
@@ -84,7 +87,12 @@ export type RecentRun = {
 };
 
 export type UsageReport = {
-  project: { cwd: string; dbPath: string; hasData: boolean };
+  /**
+   * `cwd` is the repo the dashboard was launched from; the report itself
+   * aggregates usage across every CodeRouter project on this machine.
+   * `projectCount` is how many contributed data.
+   */
+  project: { cwd: string; dbPath: string; hasData: boolean; projectCount: number };
   totals: UsageTotals;
   byMode: BreakdownRow[];
   byProvider: BreakdownRow[];
@@ -336,26 +344,43 @@ export async function buildOpenRouterCatalog(): Promise<OpenRouterCatalog> {
  * closes it before returning so we don't hold a WAL handle open for the
  * life of the server.
  */
+let backfillPromise: Promise<unknown> | null = null;
+/** Run the filesystem backfill at most once per process. */
+function backfillProjectsOnce(): Promise<unknown> {
+  if (!backfillPromise) backfillPromise = discoverProjects().catch(() => []);
+  return backfillPromise;
+}
+
 export async function buildUsageReport(cwd: string): Promise<UsageReport> {
   const dbPath = resolveDbPath(cwd);
   const generatedAt = Date.now();
 
-  if (!existsSync(dbPath)) {
-    return emptyReport(cwd, dbPath, generatedAt);
-  }
+  // Make sure the current repo is tracked, then aggregate runs from every
+  // CodeRouter project registered on this machine (deduped by db path).
+  registerProject(cwd);
+  // Once per dashboard process, backfill repos that already have a
+  // `.coderouter/memory.db` but were never registered (best-effort).
+  await backfillProjectsOnce();
+  const dbPaths = new Set<string>();
+  for (const p of listProjects()) dbPaths.add(p.dbPath);
+  if (existsSync(dbPath)) dbPaths.add(dbPath);
 
-  const store = await openStore(dbPath);
-  let runs: RunRecord[];
-  try {
-    // Large but bounded: enough to cover heavy local usage without
-    // unbounded memory. Recent-first from the store; we re-sort where
-    // ascending order matters (streaks).
-    runs = store.runs.list(5000);
-  } finally {
+  const runs: RunRecord[] = [];
+  let projectCount = 0;
+  for (const path of dbPaths) {
+    if (!existsSync(path)) continue;
+    const store = await openStore(path);
     try {
-      store.db.close();
-    } catch {
-      // best-effort
+      // Bounded per project to cap memory across many repos.
+      const projectRuns = store.runs.list(5000);
+      if (projectRuns.length) projectCount++;
+      runs.push(...projectRuns);
+    } finally {
+      try {
+        store.db.close();
+      } catch {
+        // best-effort
+      }
     }
   }
 
@@ -363,8 +388,11 @@ export async function buildUsageReport(cwd: string): Promise<UsageReport> {
     return emptyReport(cwd, dbPath, generatedAt);
   }
 
+  // Merged across repos — re-sort recent-first for recentRuns/streaks.
+  runs.sort((a, b) => b.createdAt - a.createdAt);
+
   return {
-    project: { cwd, dbPath, hasData: true },
+    project: { cwd, dbPath, hasData: true, projectCount },
     totals: computeTotals(runs),
     byMode: groupBy(runs, (r) => ({ key: r.mode, label: r.mode })),
     byProvider: groupBy(runs, (r) => {
@@ -657,7 +685,7 @@ function localDateKey(ts: number): string {
 
 function emptyReport(cwd: string, dbPath: string, generatedAt: number): UsageReport {
   return {
-    project: { cwd, dbPath, hasData: false },
+    project: { cwd, dbPath, hasData: false, projectCount: 0 },
     totals: {
       runs: 0,
       tokensIn: 0,

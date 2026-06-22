@@ -405,7 +405,7 @@ function bars(rows, unit) {
 }
 
 function runsTable(runs) {
-  if (!runs.length) return '<div class="empty">No runs recorded for this project yet. Run <span class="mono">coderouter</span> in this directory to get started.</div>';
+  if (!runs.length) return '<div class="empty">No runs recorded on this machine yet. Run <span class="mono">coderouter</span> in any repo to get started.</div>';
   const rows = runs.map((r) =>
     '<tr>' +
     '<td><span class="badge mode">' + esc(r.mode) + '</span></td>' +
@@ -423,13 +423,21 @@ function runsTable(runs) {
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 }
 
+function scopeLine() {
+  const pc = (usage.project && usage.project.projectCount) || 0;
+  if (!usage.project.hasData) {
+    return '<div class="project-path">No CodeRouter usage on this machine yet · launched from ' + esc(usage.project.cwd) + '</div>';
+  }
+  return '<div class="project-path">All CodeRouter projects on this machine · ' + pc + ' project' + (pc === 1 ? '' : 's') + ' · launched from ' + esc(usage.project.cwd) + '</div>';
+}
+
 function renderOverview() {
   const t = usage.totals;
   const h = usage.highlights;
   const main = $('#view');
   main.innerHTML =
     '<div class="page-head"><h1>Overview</h1><span class="subtle">' + (usage.project.hasData ? usage.totals.runs + ' total runs' : 'No usage yet') + '</span></div>' +
-    '<div class="project-path">' + esc(usage.project.cwd) + '</div>' +
+    scopeLine() +
     '<div class="section"><div class="cards">' +
       statCard('Total tokens', fmtNum(t.tokens), fmtFull(t.tokensIn) + ' in · ' + fmtFull(t.tokensOut) + ' out') +
       statCard('Runs', fmtFull(t.runs), fmtPct(t.successRate) + ' success') +
@@ -518,7 +526,7 @@ function renderUsage() {
     '<div class="page-head"><h1>Usage</h1>' +
       '<div class="tabs"><div class="tab ' + (usageUnit === 'cost' ? 'active' : '') + '" data-unit="cost">Cost</div><div class="tab ' + (usageUnit === 'tokens' ? 'active' : '') + '" data-unit="tokens">Tokens</div><div class="tab ' + (usageUnit === 'runs' ? 'active' : '') + '" data-unit="runs">Runs</div></div>' +
     '</div>' +
-    '<div class="project-path">' + esc(usage.project.cwd) + '</div>' +
+    scopeLine() +
     '<div class="section">' + spendMeter({ editable: false }) + '</div>' +
     '<div class="section"><div class="section-title">By model / provider</div>' + bars(usage.byProvider, usageUnit) + '</div>' +
     '<div class="section"><div class="section-title">By mode</div>' + bars(usage.byMode, usageUnit) + '</div>' +
@@ -532,7 +540,7 @@ function renderSpending() {
   const t = usage.totals;
   main.innerHTML =
     '<div class="page-head"><h1>Spending</h1><span class="subtle">' + fmtUsd(t.costUsd) + ' all-time</span></div>' +
-    '<div class="project-path">' + esc(usage.project.cwd) + '</div>' +
+    scopeLine() +
     '<div class="section">' + spendMeter({ editable: true }) + '</div>' +
     '<div class="section"><div class="cards">' +
       statCard('This month', fmtUsd(t.monthCostUsd), fmtMonth(t.monthKey)) +
