@@ -19,12 +19,13 @@ type Msg = {
 };
 
 const EFFORTS = ['low', 'medium', 'high', 'max'] as const;
-const MODES = ['agent', 'plan', 'debug', 'review'] as const;
+const MODES = ['agent', 'plan', 'masterplan', 'debug', 'review'] as const;
 
 /** Per-mode accent colors so the selector reads like Cursor's mode picker. */
 const MODE_META: Record<string, { label: string; dot: string; text: string; chip: string }> = {
   agent: { label: 'Agent', dot: 'bg-emerald-500', text: 'text-emerald-500', chip: 'border-emerald-500/40 bg-emerald-500/10' },
   plan: { label: 'Plan', dot: 'bg-sky-500', text: 'text-sky-500', chip: 'border-sky-500/40 bg-sky-500/10' },
+  masterplan: { label: 'Masterplan', dot: 'bg-indigo-500', text: 'text-indigo-500', chip: 'border-indigo-500/40 bg-indigo-500/10' },
   debug: { label: 'Debug', dot: 'bg-amber-500', text: 'text-amber-500', chip: 'border-amber-500/40 bg-amber-500/10' },
   review: { label: 'Review', dot: 'bg-violet-500', text: 'text-violet-500', chip: 'border-violet-500/40 bg-violet-500/10' },
 };

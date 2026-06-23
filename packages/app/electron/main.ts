@@ -66,18 +66,36 @@ function findNode(): string | null {
 
 /** Resolve the command used to spawn the daemon. */
 function resolveCli(): { cmd: string; args: string[]; electronNode: boolean } {
-  const cliPath = process.env.CODEROUTER_CLI || (() => {
-    const local = join(app.getAppPath(), '..', 'cli', 'dist', 'cli.js');
-    return existsSync(local) ? local : null;
-  })();
-
-  if (cliPath) {
+  // 1. Explicit override (dev / power users). Prefer standalone Node if one
+  //    exists so a system node-pty matches; otherwise Electron-as-Node.
+  const override = process.env.CODEROUTER_CLI;
+  if (override && existsSync(override)) {
     const node = findNode();
-    // Prefer standalone Node so node-pty loads; fall back to Electron-as-Node
-    // (the daemon still works, only the terminal backend would be unavailable).
-    if (node) return { cmd: node, args: [cliPath], electronNode: false };
-    return { cmd: process.execPath, args: [cliPath], electronNode: true };
+    return node
+      ? { cmd: node, args: [override], electronNode: false }
+      : { cmd: process.execPath, args: [override], electronNode: true };
   }
+
+  // 2. Daemon bundled inside the packaged app (staged by scripts/stage-daemon
+  //    into Resources/cli). Run it under Electron's own Node
+  //    (ELECTRON_RUN_AS_NODE), which is guaranteed new enough for node:sqlite
+  //    and loads node-pty's NAPI prebuild — so the app is fully
+  //    self-contained and needs no global Node install.
+  const bundled = join(process.resourcesPath, 'cli', 'dist', 'cli.js');
+  if (existsSync(bundled)) {
+    return { cmd: process.execPath, args: [bundled], electronNode: true };
+  }
+
+  // 3. Dev: the sibling workspace build.
+  const local = join(app.getAppPath(), '..', 'cli', 'dist', 'cli.js');
+  if (existsSync(local)) {
+    const node = findNode();
+    return node
+      ? { cmd: node, args: [local], electronNode: false }
+      : { cmd: process.execPath, args: [local], electronNode: true };
+  }
+
+  // 4. Last resort: a globally installed `coderouter` on PATH.
   return { cmd: 'coderouter', args: [], electronNode: false };
 }
 

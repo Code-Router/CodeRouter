@@ -1,9 +1,15 @@
 {
   "appId": "dev.coderouter.studio",
   "productName": "CodeRouter Studio",
+  "npmRebuild": false,
   "files": ["dist/**/*", "dist-electron/**/*"],
-  "directories": { "output": "release" },
-  "mac": { "category": "public.app-category.developer-tools", "target": ["dmg"] },
+  "extraResources": [{ "from": "resources/cli", "to": "cli" }],
+  "directories": { "output": "release", "buildResources": "build" },
+  "mac": {
+    "category": "public.app-category.developer-tools",
+    "target": ["dmg"],
+    "icon": "build/icon.icns"
+  },
   "linux": { "target": ["AppImage"], "category": "Development" },
   "win": { "target": ["nsis"] }
 }

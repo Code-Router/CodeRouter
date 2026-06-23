@@ -5,14 +5,14 @@
   "description": "A coding-agent router that picks the best model for each task, runs edits in git-worktree sandboxes, and works with your existing Claude Code / Codex CLI or any API key (OpenAI, Anthropic, OpenRouter, ...).",
   "license": "MIT",
   "author": "Efe Acar",
-  "homepage": "https://github.com/EfeAcar6431/CodeRouter#readme",
+  "homepage": "https://github.com/Code-Router/CodeRouter#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EfeAcar6431/CodeRouter.git",
+    "url": "git+https://github.com/Code-Router/CodeRouter.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/EfeAcar6431/CodeRouter/issues"
+    "url": "https://github.com/Code-Router/CodeRouter/issues"
   },
   "keywords": [
     "ai",

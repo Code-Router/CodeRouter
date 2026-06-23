@@ -52,8 +52,8 @@ In the REPL, type `/` for commands and `@` to reference files. Slash commands in
 
 ## Links
 
-- Repository & full docs: <https://github.com/EfeAcar6431/CodeRouter>
-- Issues: <https://github.com/EfeAcar6431/CodeRouter/issues>
+- Repository & full docs: <https://github.com/Code-Router/CodeRouter>
+- Issues: <https://github.com/Code-Router/CodeRouter/issues>
 
 ## License
 

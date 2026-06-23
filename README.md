@@ -8,7 +8,37 @@ One coding agent that picks the right model for every task — fast, cheap model
 
 Works with your existing **Claude Code** or **Codex** CLI, or any API key — OpenAI, Anthropic, OpenRouter, DeepSeek, Groq, or a local Ollama model.
 
-## Install
+Use it two ways: the **CLI** (`coderouter`) for the terminal, or **CodeRouter Studio**, a desktop app for everything else.
+
+## CodeRouter Studio (desktop app)
+
+CodeRouter Studio is a native desktop app that wraps the same router in a full UI — your projects, chats, loops, usage, and plugins in one place. It runs a persistent local daemon so background work (like loops) keeps going after you close the window.
+
+**Download:** grab the latest `CodeRouter-Studio-*.dmg` (macOS) from the [Releases page](https://github.com/Code-Router/CodeRouter/releases), drag it to Applications, and open it.
+
+> The app isn't notarized yet, so on first launch macOS may warn that it's from an unidentified developer. Right‑click the app → **Open**, then confirm. The app is fully self‑contained — no separate Node or CLI install required.
+
+What's inside:
+
+- **Chat** with all five modes — Agent, Plan, Masterplan, Debug, Review — picked from a color‑coded selector. Voice‑to‑text, a project picker, and inline code diffs with **Review / Undo**.
+- **Projects & Chats** — register any folder, browse your work, and open the chats that belong to each project. CLI sessions and app chats share the same store, so they show up identically in both places.
+- **Loops** — describe an outcome in plain English; CodeRouter generates a verifiable loop (goal, verifier, stop condition), you approve it, and it runs and self‑corrects until the check passes.
+- **Usage & Spending** — cost/usage across *all* CodeRouter work on your machine, an activity heatmap, and a spending limit (default **$50/mo**) that's actually enforced by the daemon, with a progress bar on the Overview.
+- **Plugins** — install plugins, rules, skills, and subagents, or browse the marketplace.
+- **Terminal** — a real, responsive shell in the bottom/side panel.
+- **Light & dark themes.**
+
+### Build Studio from source
+
+```bash
+pnpm i
+pnpm --filter @coderouter/app dev       # run in development
+pnpm --filter @coderouter/app package   # build a distributable (.dmg / AppImage / nsis)
+```
+
+`package` builds the renderer + Electron main, bundles the daemon into the app (so it's self‑contained), and emits an installer under `packages/app/release/`.
+
+## Install (CLI)
 
 Requires **Node 24+**.
 
