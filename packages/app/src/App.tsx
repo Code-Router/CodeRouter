@@ -8,6 +8,8 @@ import {
   FolderPlus,
   LayoutDashboard,
   type LucideIcon,
+  Monitor,
+  Moon,
   PanelBottom,
   PanelLeft,
   PanelRight,
@@ -15,6 +17,7 @@ import {
   Settings as SettingsIcon,
   Sparkles,
   SquarePen,
+  Sun,
 } from 'lucide-react';
 import { api, execCommand, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
 import { LoopEventsProvider, useDaemonConnected } from './lib/events';
@@ -535,28 +538,36 @@ function SidebarSettings({
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-lg border border-border bg-panel shadow-xl shadow-black/40">
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-            <Logo className="h-5 w-5" />
-            <span className="text-sm font-semibold text-text">CodeRouter</span>
-            <span className="ml-auto flex items-center gap-1.5 text-xs text-muted">
-              <span className={cls('h-1.5 w-1.5 rounded-full', connected ? 'bg-ok' : 'bg-bad')} />
-              {connected ? 'Connected' : 'Offline'}
-            </span>
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-xl border border-border bg-panel p-1.5 shadow-2xl shadow-black/40">
+          <div className="flex items-center gap-2.5 px-1.5 py-1.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-panel2">
+              <Logo className="h-6 w-6" />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-text">CodeRouter</div>
+              <div className="flex items-center gap-1.5 text-xs text-muted">
+                <span className={cls('h-1.5 w-1.5 shrink-0 rounded-full', connected ? 'bg-ok' : 'bg-bad')} />
+                {connected ? 'Daemon connected' : 'Daemon offline'}
+              </div>
+            </div>
           </div>
-          <div className="p-1">
-            <button
-              onClick={() => {
-                setOpen(false);
-                onOpenSettings();
-              }}
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-text transition-colors hover:bg-panel2"
-            >
-              <SettingsIcon className="h-4 w-4 text-muted" strokeWidth={2} />
-              Settings
-            </button>
-          </div>
-          <div className="border-t border-border px-3 py-2.5">
+
+          <div className="my-1 h-px bg-border" />
+
+          <button
+            onClick={() => {
+              setOpen(false);
+              onOpenSettings();
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-text transition-colors hover:bg-panel2"
+          >
+            <SettingsIcon className="h-4 w-4 text-muted" strokeWidth={2} />
+            Open settings
+          </button>
+
+          <div className="my-1 h-px bg-border" />
+
+          <div className="px-1.5 pb-0.5 pt-1">
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">Appearance</div>
             <ThemeToggle />
           </div>
@@ -568,25 +579,30 @@ function SidebarSettings({
 
 function ThemeToggle(): React.ReactElement {
   const { pref, setPref } = useTheme();
-  const opts: Array<{ id: ThemePref; label: string }> = [
-    { id: 'light', label: 'Light' },
-    { id: 'dark', label: 'Dark' },
-    { id: 'system', label: 'System' },
+  const opts: Array<{ id: ThemePref; label: string; icon: LucideIcon }> = [
+    { id: 'light', label: 'Light', icon: Sun },
+    { id: 'dark', label: 'Dark', icon: Moon },
+    { id: 'system', label: 'System', icon: Monitor },
   ];
   return (
-    <div className="inline-flex w-full overflow-hidden rounded-md border border-border">
-      {opts.map((o) => (
-        <button
-          key={o.id}
-          onClick={() => setPref(o.id)}
-          className={cls(
-            'flex-1 px-2 py-1 text-xs transition-colors',
-            pref === o.id ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
+    <div className="grid grid-cols-3 gap-1 rounded-lg bg-panel2 p-1">
+      {opts.map((o) => {
+        const Icon = o.icon;
+        const sel = pref === o.id;
+        return (
+          <button
+            key={o.id}
+            onClick={() => setPref(o.id)}
+            className={cls(
+              'flex flex-col items-center gap-1 rounded-md px-1 py-1.5 text-[11px] font-medium transition-colors',
+              sel ? 'bg-panel text-text shadow-sm ring-1 ring-border' : 'text-muted hover:text-text',
+            )}
+          >
+            <Icon className="h-4 w-4" strokeWidth={2} />
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
