@@ -1,6 +1,6 @@
 {
   "name": "@coderouter/app",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "CodeRouter Studio — Electron desktop app (Loops, Projects, Chats, Usage)",
   "author": "Efe Acar",

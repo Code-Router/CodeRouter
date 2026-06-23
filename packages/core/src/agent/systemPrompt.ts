@@ -32,6 +32,23 @@ export const DEFAULT_SYSTEM_PROMPT = `You are CodeRouter Agent, a precise coding
  * memory.md / project context without forking the whole prompt.
  */
 export function buildSystemPrompt(opts: { append?: string } = {}): string {
-  if (!opts.append?.trim()) return DEFAULT_SYSTEM_PROMPT;
-  return `${DEFAULT_SYSTEM_PROMPT}\n\n# Project context\n${opts.append.trim()}`;
+  const base = `${DEFAULT_SYSTEM_PROMPT}\n\n# Environment\n${describeEnvironment()}`;
+  if (!opts.append?.trim()) return base;
+  return `${base}\n\n# Project context\n${opts.append.trim()}`;
+}
+
+/** A one-liner describing the host OS so the agent generates compatible commands. */
+function describeEnvironment(): string {
+  switch (process.platform) {
+    case 'win32':
+      return (
+        '- OS: Windows. The bash tool runs commands through cmd.exe, so use Windows-compatible ' +
+        'commands (e.g. chain with `&&`, avoid Unix-only tools like `ls`/`cat`/`grep`). ' +
+        'Prefer the read_file / glob / grep / list_dir tools over shelling out — they work everywhere.'
+      );
+    case 'darwin':
+      return '- OS: macOS. Shell commands run via /bin/sh.';
+    default:
+      return '- OS: Linux. Shell commands run via /bin/sh.';
+  }
 }

@@ -145,6 +145,24 @@ export async function exec(
   });
 }
 
+/**
+ * Build a platform-appropriate shell invocation for a command string.
+ *
+ * POSIX uses `/bin/sh`; Windows uses the ComSpec shell (`cmd.exe`), which is
+ * always present and supports `&&` chaining. Without this, spawning `/bin/sh`
+ * on Windows fails with ENOENT and the agent can't run any commands at all.
+ */
+export function shellInvocation(
+  command: string,
+  opts: { login?: boolean } = {},
+): { cmd: string; args: string[] } {
+  if (process.platform === 'win32') {
+    const shell = process.env.ComSpec || 'cmd.exe';
+    return { cmd: shell, args: ['/d', '/s', '/c', command] };
+  }
+  return { cmd: '/bin/sh', args: [opts.login ? '-lc' : '-c', command] };
+}
+
 export async function git(
   args: string[],
   opts: ExecOptions = {},

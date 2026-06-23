@@ -331,9 +331,9 @@ function Shell(): React.ReactElement {
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className={cls('min-h-0 flex-1', nav === 'chat' ? 'overflow-hidden' : 'overflow-y-auto')}>
             {nav === 'chat' ? (
-              <div className="h-full px-12 py-6">
+              <div className="h-full px-12 pt-6 pb-4">
                 <ChatPage
                   chatId={chatId}
                   project={project}

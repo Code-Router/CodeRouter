@@ -1,4 +1,4 @@
-import { exec } from '../../sandbox/exec.js';
+import { exec, shellInvocation } from '../../sandbox/exec.js';
 import type { Tool } from '../types.js';
 import { MAX_BASH_OUTPUT_BYTES, clip, oneLine, stringArg } from './helpers.js';
 
@@ -12,7 +12,11 @@ export const bashTool: Tool = {
   parameters: {
     type: 'object',
     properties: {
-      command: { type: 'string', description: 'Shell command to execute via /bin/sh -lc.' },
+      command: {
+        type: 'string',
+        description:
+          'Shell command to execute. Runs via the system shell (sh on macOS/Linux, cmd.exe on Windows).',
+      },
       timeout_ms: {
         type: 'integer',
         description: 'Hard timeout in milliseconds. Defaults to 60000.',
@@ -25,7 +29,8 @@ export const bashTool: Tool = {
     const command = stringArg(args, 'command');
     const timeoutMs =
       typeof args.timeout_ms === 'number' && args.timeout_ms > 0 ? args.timeout_ms : 60_000;
-    const result = await exec('/bin/sh', ['-lc', command], {
+    const { cmd, args: shArgs } = shellInvocation(command, { login: true });
+    const result = await exec(cmd, shArgs, {
       cwd: ctx.cwd,
       signal: ctx.signal,
       timeoutMs,

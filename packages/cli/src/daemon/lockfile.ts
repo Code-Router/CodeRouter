@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { coderouterHome } from '@coderouter/core';
+import { CLI_VERSION } from '../version.js';
 
 /**
  * Daemon singleton bookkeeping. The daemon writes `~/.coderouter/daemon.json`
@@ -59,15 +60,50 @@ export async function pingDaemon(port: number, timeoutMs = 1500): Promise<Daemon
 }
 
 /**
+ * Stop a running daemon by PID and wait for it to release its port. Used to
+ * replace a stale daemon left running by an older install (the daemon is
+ * detached and survives a `git pull`/reinstall, so without this a user can be
+ * stuck on the old version indefinitely).
+ */
+export async function stopDaemon(info: DaemonInfo, waitMs = 5000): Promise<void> {
+  try {
+    process.kill(info.pid, 'SIGTERM');
+  } catch {
+    // already gone
+  }
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    if (!(await pingDaemon(info.port, 800))) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (await pingDaemon(info.port, 800)) {
+    try {
+      process.kill(info.pid, 'SIGKILL');
+    } catch {
+      // ignore
+    }
+  }
+  clearDaemonInfo();
+}
+
+/**
  * Return a live daemon's info, spawning one (detached) if needed. The
  * spawned process keeps running after this CLI exits so loops survive.
+ *
+ * If a daemon is alive but runs a different version than this CLI (e.g. left
+ * over from an older clone/install), it is stopped and replaced so users
+ * always run the version they just installed.
  */
 export async function ensureDaemon(opts: { cwd: string } = { cwd: process.cwd() }): Promise<DaemonInfo> {
   const existing = readDaemonInfo();
   if (existing) {
     const alive = await pingDaemon(existing.port);
-    if (alive) return alive;
-    clearDaemonInfo();
+    if (alive) {
+      if (alive.version === CLI_VERSION) return alive;
+      await stopDaemon(alive);
+    } else {
+      clearDaemonInfo();
+    }
   }
 
   // Spawn `coderouter daemon` detached. argv[1] is this CLI's entry.

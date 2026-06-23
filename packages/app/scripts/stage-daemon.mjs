@@ -55,6 +55,7 @@ writeFileSync(
       name: 'coderouter-daemon',
       private: true,
       type: 'module',
+      version: cliPkg.version,
       dependencies: {
         '@vscode/ripgrep': want('@vscode/ripgrep'),
         ink: want('ink'),

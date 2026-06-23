@@ -45,6 +45,48 @@ async function ping(port: number): Promise<DaemonInfo | null> {
 }
 
 /**
+ * The daemon version this app build expects, read from the bundled (or, in
+ * dev, the sibling workspace) CLI package.json. Used to detect a stale daemon
+ * left running by an older install so we can replace it.
+ */
+function expectedDaemonVersion(): string | null {
+  const candidates = [
+    join(process.resourcesPath, 'cli', 'package.json'),
+    join(app.getAppPath(), '..', 'cli', 'package.json'),
+  ];
+  for (const p of candidates) {
+    try {
+      const v = (JSON.parse(readFileSync(p, 'utf8')) as { version?: string }).version;
+      if (typeof v === 'string' && v) return v;
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+/** Stop a running daemon by PID and wait for its port to free. */
+async function stopDaemon(info: DaemonInfo): Promise<void> {
+  try {
+    process.kill(info.pid, 'SIGTERM');
+  } catch {
+    // already gone
+  }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (!(await ping(info.port))) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (await ping(info.port)) {
+    try {
+      process.kill(info.pid, 'SIGKILL');
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
  * Locate a standalone Node binary. The daemon must run under regular Node
  * (not Electron's bundled Node) so native addons like `node-pty` — which
  * powers the Studio terminal and ships a prebuilt binary for the standard
@@ -110,7 +152,13 @@ async function ensureDaemon(): Promise<DaemonInfo> {
   const existing = readDaemonInfo();
   if (existing) {
     const alive = await ping(existing.port);
-    if (alive) return alive;
+    if (alive) {
+      // Replace a stale daemon from an older install so the app always runs
+      // the version it shipped with.
+      const want = expectedDaemonVersion();
+      if (!want || alive.version === want) return alive;
+      await stopDaemon(alive);
+    }
   }
 
   const { cmd, args, electronNode } = resolveCli();

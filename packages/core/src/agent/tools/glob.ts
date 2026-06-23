@@ -1,7 +1,9 @@
-import { stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
+import { join, relative, sep } from 'node:path';
 import { exec } from '../../sandbox/exec.js';
 import type { Tool, ToolContext } from '../types.js';
-import { MAX_GLOB_RESULTS, escapeShellArg, quoted, stringArg } from './helpers.js';
+import { MAX_GLOB_RESULTS, quoted, stringArg } from './helpers.js';
 
 export const globTool: Tool = {
   name: 'glob',
@@ -41,18 +43,62 @@ async function runGlob(ctx: ToolContext, pattern: string): Promise<string[]> {
     );
     return stdout.split('\n').filter(Boolean);
   }
-  const { stdout } = await exec(
-    '/bin/sh',
-    [
-      '-lc',
-      `find . -path ${escapeShellArg(pattern)} -type f -not -path '*/.*' | head -n 1000`,
-    ],
-    { cwd: ctx.cwd, signal: ctx.signal },
-  );
-  return stdout
-    .split('\n')
-    .filter(Boolean)
-    .map((p) => (p.startsWith('./') ? p.slice(2) : p));
+  // Non-git worktree: walk the tree in Node (cross-platform; no reliance on a
+  // POSIX `find`, which doesn't exist on Windows) and match the glob ourselves.
+  const all = await walkFiles(ctx.cwd);
+  const rx = globToRegExp(pattern);
+  return all.filter((p) => rx.test(p)).slice(0, 1000);
+}
+
+/** Recursively list files relative to `root`, skipping dotfiles and node_modules. */
+async function walkFiles(root: string, max = 5000): Promise<string[]> {
+  const out: string[] = [];
+  const rec = async (dir: string): Promise<void> => {
+    if (out.length >= max) return;
+    const entries: Dirent[] = await readdir(dir, { withFileTypes: true }).catch(() => [] as Dirent[]);
+    for (const e of entries) {
+      if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        await rec(full);
+      } else if (e.isFile()) {
+        out.push(relative(root, full).split(sep).join('/'));
+        if (out.length >= max) return;
+      }
+    }
+  };
+  await rec(root);
+  return out;
+}
+
+/** Convert a POSIX-style glob (`**`, `*`, `?`, `{a,b}`) to an anchored RegExp. */
+function globToRegExp(glob: string): RegExp {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob.charAt(i);
+    if (c === '*') {
+      if (glob.charAt(i + 1) === '*') {
+        re += '.*';
+        i++;
+        if (glob.charAt(i + 1) === '/') i++;
+      } else {
+        re += '[^/]*';
+      }
+    } else if (c === '?') {
+      re += '[^/]';
+    } else if (c === '{') {
+      re += '(';
+    } else if (c === '}') {
+      re += ')';
+    } else if (c === ',') {
+      re += '|';
+    } else if ('.+^$()|[]\\'.includes(c)) {
+      re += `\\${c}`;
+    } else {
+      re += c;
+    }
+  }
+  return new RegExp(`^${re}$`);
 }
 
 async function isGitRepo(cwd: string): Promise<boolean> {

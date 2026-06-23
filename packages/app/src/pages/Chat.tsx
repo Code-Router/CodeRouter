@@ -215,14 +215,14 @@ export function ChatPage({
 
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col">
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-5 overflow-y-auto py-2">
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto px-1 pb-6 pt-2">
         {loadingHistory && <Spinner />}
         {messages.map((m, i) => (
           <MessageRow key={i} msg={m} />
         ))}
       </div>
       {error && <div className="mb-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
-      {composer}
+      <div className="pt-3">{composer}</div>
     </div>
   );
 }
