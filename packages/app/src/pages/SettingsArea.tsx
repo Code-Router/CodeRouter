@@ -9,11 +9,11 @@ import { SpendingPage } from './Spending';
 export function SettingsArea({ onBack }: { onBack?: () => void }): React.ReactElement {
   const [tab, setTab] = useState('general');
   return (
-    <div className="mx-auto w-full max-w-3xl">
+    <div className="mx-auto w-full max-w-5xl">
       {onBack && (
         <button
           onClick={onBack}
-          className="mb-4 -ml-1 flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-text"
+          className="mb-3 -ml-1 flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-text"
         >
           <ArrowLeft className="h-4 w-4" strokeWidth={2} />
           Back to app
