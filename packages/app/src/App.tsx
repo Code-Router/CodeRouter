@@ -333,7 +333,7 @@ function Shell(): React.ReactElement {
         <div className="flex min-h-0 flex-1">
           <div className="min-h-0 flex-1 overflow-y-auto">
             {nav === 'chat' ? (
-              <div className="h-full px-6 py-5">
+              <div className="h-full px-9 py-6">
                 <ChatPage
                   chatId={chatId}
                   project={project}
@@ -351,7 +351,7 @@ function Shell(): React.ReactElement {
             ) : (
               // Universal page container: one place controls width + side
               // margins for every section so they stay consistent.
-              <div className="mx-auto w-full max-w-6xl px-6 py-5">
+              <div className="mx-auto w-full max-w-6xl px-9 py-6">
                 {nav === 'overview' && <OverviewArea />}
                 {nav === 'loops' && <LoopsPage projects={allProjects} project={project} />}
                 {nav === 'plugins' && <PluginsPage project={project} />}
