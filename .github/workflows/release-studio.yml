@@ -1,0 +1,63 @@
+name: Release CodeRouter Studio
+
+# Builds the CodeRouter Studio desktop installers on native runners (so the
+# Windows .exe and macOS .dmg are produced without cross-compiling) and
+# attaches them to the GitHub release for the pushed tag.
+#
+# Trigger by pushing a tag like `studio-v0.1.1`, or run manually and pass the
+# target release tag.
+
+on:
+  push:
+    tags:
+      - 'studio-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish installers to (e.g. studio-v0.1.1)'
+        required: true
+        default: studio-v0.1.1
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build installer
+        run: pnpm --filter @coderouter/app package
+        env:
+          # Unsigned builds — skip macOS signing identity discovery so the
+          # build doesn't fail looking for a Developer ID certificate.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Publish to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          fail_on_unmatched_files: false
+          files: |
+            packages/app/release/*.exe
+            packages/app/release/*.dmg
+            packages/app/release/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

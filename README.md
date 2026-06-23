@@ -14,9 +14,12 @@ Use it two ways: the **CLI** (`coderouter`) for the terminal, or **CodeRouter St
 
 CodeRouter Studio is a native desktop app that wraps the same router in a full UI — your projects, chats, loops, usage, and plugins in one place. It runs a persistent local daemon so background work (like loops) keeps going after you close the window.
 
-**Download:** grab the latest `CodeRouter-Studio-*.dmg` (macOS) from the [Releases page](https://github.com/Code-Router/CodeRouter/releases), drag it to Applications, and open it.
+**Download** the latest build from the [Releases page](https://github.com/Code-Router/CodeRouter/releases):
 
-> The app isn't notarized yet, so on first launch macOS may warn that it's from an unidentified developer. Right‑click the app → **Open**, then confirm. The app is fully self‑contained — no separate Node or CLI install required.
+- **macOS (Apple Silicon):** the `.dmg` — open it and drag CodeRouter Studio to Applications.
+- **Windows:** the `.exe` installer — run it and CodeRouter Studio installs and launches.
+
+> Builds aren't code‑signed yet. On macOS, right‑click the app → **Open** and confirm. On Windows, if SmartScreen appears, click **More info → Run anyway**. The app is fully self‑contained — no separate Node or CLI install required.
 
 What's inside:
 

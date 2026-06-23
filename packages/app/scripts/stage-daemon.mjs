@@ -68,9 +68,12 @@ writeFileSync(
 );
 
 console.log('[stage-daemon] installing daemon runtime deps (ink, react, ws, ripgrep)…');
+// `shell: true` so this resolves npm.cmd on Windows as well as npm on
+// macOS/Linux — the staging step runs on every target platform in CI.
 execFileSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund', '--no-package-lock'], {
   cwd: out,
   stdio: 'inherit',
+  shell: true,
 });
 
 // 2. node-pty: copy the already-built package (with NAPI prebuilds) from the
