@@ -349,7 +349,7 @@ function LoopDetail({ cwd, id, onBack }: { cwd: string; id: string; onBack: () =
   const running = loop.status === 'running' || loop.status === 'queued';
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto w-full max-w-5xl">
       <button className="mb-4 text-sm text-muted hover:text-text" onClick={onBack}>
         ← all loops
       </button>
