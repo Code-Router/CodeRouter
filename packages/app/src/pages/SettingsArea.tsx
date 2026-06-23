@@ -9,7 +9,7 @@ import { SpendingPage } from './Spending';
 export function SettingsArea({ onBack }: { onBack?: () => void }): React.ReactElement {
   const [tab, setTab] = useState('general');
   return (
-    <div className="mx-auto w-full max-w-5xl">
+    <div>
       {onBack && (
         <button
           onClick={onBack}

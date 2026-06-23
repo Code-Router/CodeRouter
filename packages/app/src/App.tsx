@@ -331,26 +331,33 @@ function Shell(): React.ReactElement {
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
-          <div className="min-h-0 flex-1 overflow-y-auto p-5">
-            {nav === 'overview' && <OverviewArea />}
-            {nav === 'chat' && (
-              <ChatPage
-                chatId={chatId}
-                project={project}
-                projects={allProjects}
-                onProjectChange={setProject}
-                onAddFolder={() => void openExistingFolder()}
-                onChanges={setChanges}
-                onSessionCreated={(id) => {
-                  setChatId(id);
-                  setChatsKey((k) => k + 1);
-                  if (project) setExpanded((e) => new Set(e).add(project));
-                }}
-              />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {nav === 'chat' ? (
+              <div className="h-full px-6 py-5">
+                <ChatPage
+                  chatId={chatId}
+                  project={project}
+                  projects={allProjects}
+                  onProjectChange={setProject}
+                  onAddFolder={() => void openExistingFolder()}
+                  onChanges={setChanges}
+                  onSessionCreated={(id) => {
+                    setChatId(id);
+                    setChatsKey((k) => k + 1);
+                    if (project) setExpanded((e) => new Set(e).add(project));
+                  }}
+                />
+              </div>
+            ) : (
+              // Universal page container: one place controls width + side
+              // margins for every section so they stay consistent.
+              <div className="mx-auto w-full max-w-6xl px-6 py-5">
+                {nav === 'overview' && <OverviewArea />}
+                {nav === 'loops' && <LoopsPage projects={allProjects} project={project} />}
+                {nav === 'plugins' && <PluginsPage project={project} />}
+                {nav === 'settings' && <SettingsArea onBack={() => setNav(prevNav)} />}
+              </div>
             )}
-            {nav === 'loops' && <LoopsPage projects={allProjects} project={project} />}
-            {nav === 'plugins' && <PluginsPage project={project} />}
-            {nav === 'settings' && <SettingsArea onBack={() => setNav(prevNav)} />}
           </div>
           {sidePanelOpen && (
             <aside className="w-96 shrink-0 border-l border-border bg-panel">

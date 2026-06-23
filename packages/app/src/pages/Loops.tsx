@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  ArrowLeft,
   ArrowUpCircle,
   Bug,
   Check,
@@ -164,13 +165,13 @@ const LOOP_EXAMPLES: Array<{ icon: LucideIcon; title: string; desc: string; prom
 /** Hand-holding empty state: what a loop is, how it works, and ready-to-run examples. */
 function LoopsEmpty({ onStart }: { onStart: (request?: string) => void }): React.ReactElement {
   return (
-    <div className="mx-auto max-w-3xl pb-10">
+    <div className="pb-10">
       <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-panel2 px-3 py-1 text-xs font-medium text-muted">
         <Repeat className="h-3.5 w-3.5 text-accent" strokeWidth={2.5} />
         Autonomous loops
       </div>
       <h2 className="text-2xl font-semibold tracking-tight">Hand off a goal — CodeRouter works until it’s actually done.</h2>
-      <p className="mt-3 text-sm leading-relaxed text-muted">
+      <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted">
         A loop is an agent on autopilot <span className="text-text">with a finish line</span>. You describe the outcome you
         want — “make the tests pass”, “get coverage to 80%”, “clear all the type errors”. CodeRouter turns it into a plan
         you approve, then repeats <span className="text-text">edit → run your checks → fix what failed</span> over and
@@ -292,9 +293,10 @@ function NewLoop({
   };
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <button className="mb-4 text-sm text-muted hover:text-text" onClick={onCancel}>
-        ← back
+    <div>
+      <button className="mb-4 flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-text" onClick={onCancel}>
+        <ArrowLeft className="h-4 w-4" strokeWidth={2} />
+        Back
       </button>
 
       <Section title="What do you want done?">
@@ -495,9 +497,10 @@ function LoopDetail({ cwd, id, onBack }: { cwd: string; id: string; onBack: () =
   const running = loop.status === 'running' || loop.status === 'queued';
 
   return (
-    <div className="mx-auto w-full max-w-5xl">
-      <button className="mb-4 text-sm text-muted hover:text-text" onClick={onBack}>
-        ← all loops
+    <div>
+      <button className="mb-4 flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-text" onClick={onBack}>
+        <ArrowLeft className="h-4 w-4" strokeWidth={2} />
+        All loops
       </button>
 
       <div className="mb-4 flex items-start justify-between gap-4">
