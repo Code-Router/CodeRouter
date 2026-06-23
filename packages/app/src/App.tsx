@@ -222,7 +222,7 @@ function Shell(): React.ReactElement {
                 key={n.id}
                 onClick={() => (n.id === 'chat' ? newChat() : setNav(n.id))}
                 className={cls(
-                  'no-drag mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[15px] font-medium transition-colors',
+                  'no-drag mb-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm font-medium transition-colors',
                   active ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
                 )}
               >
@@ -252,7 +252,7 @@ function Shell(): React.ReactElement {
                   onClick={() => toggleProject(p.cwd)}
                   title={p.cwd}
                   className={cls(
-                    'no-drag flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-[15px] font-medium transition-colors hover:bg-panel2',
+                    'no-drag flex w-full items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-sm font-medium transition-colors hover:bg-panel2',
                     project === p.cwd ? 'text-text' : 'text-muted hover:text-text',
                   )}
                 >
@@ -274,7 +274,7 @@ function Shell(): React.ReactElement {
                         onClick={() => openChat(c)}
                         title={c.title}
                         className={cls(
-                          'no-drag flex w-full items-center rounded-md px-2 py-1 text-left text-sm transition-colors',
+                          'no-drag flex w-full items-center rounded-md px-2 py-1 text-left text-[13px] transition-colors',
                           nav === 'chat' && chatId === c.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
                         )}
                       >
@@ -525,7 +525,7 @@ function SidebarSettings({
       <button
         onClick={() => setOpen((o) => !o)}
         className={cls(
-          'no-drag flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[15px] font-medium transition-colors',
+          'no-drag flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm font-medium transition-colors',
           active || open ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
         )}
       >
