@@ -20,6 +20,14 @@ type Msg = {
 
 const EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 const MODES = ['agent', 'plan', 'debug', 'review'] as const;
+
+/** Per-mode accent colors so the selector reads like Cursor's mode picker. */
+const MODE_META: Record<string, { label: string; dot: string; text: string; chip: string }> = {
+  agent: { label: 'Agent', dot: 'bg-emerald-500', text: 'text-emerald-500', chip: 'border-emerald-500/40 bg-emerald-500/10' },
+  plan: { label: 'Plan', dot: 'bg-sky-500', text: 'text-sky-500', chip: 'border-sky-500/40 bg-sky-500/10' },
+  debug: { label: 'Debug', dot: 'bg-amber-500', text: 'text-amber-500', chip: 'border-amber-500/40 bg-amber-500/10' },
+  review: { label: 'Review', dot: 'bg-violet-500', text: 'text-violet-500', chip: 'border-violet-500/40 bg-violet-500/10' },
+};
 /** Sentinel option value: triggers the folder picker rather than selecting a project. */
 const ADD_FOLDER = '__add_folder__';
 
@@ -363,7 +371,7 @@ function Composer({
             ...(onAddFolder ? [{ value: ADD_FOLDER, label: '+ Add folder…' }] : []),
           ]}
         />
-        <Pill value={mode} onChange={setMode} title="Mode" options={MODES.map((m) => ({ value: m, label: m }))} />
+        <ModePill value={mode} onChange={setMode} />
         <Pill value={effort} onChange={setEffort} title="Reasoning effort" capitalize options={EFFORTS.map((e) => ({ value: e, label: e }))} />
 
         <div className="ml-auto flex items-center gap-1.5">
@@ -462,6 +470,43 @@ function useVoiceInput(onText: (t: string) => void): { supported: boolean; liste
   };
 
   return { supported, listening, toggle };
+}
+
+/** Mode selector where each mode carries its own color, Cursor-style. */
+function ModePill({ value, onChange }: { value: string; onChange: (v: string) => void }): React.ReactElement {
+  const meta = MODE_META[value] ?? MODE_META.agent;
+  return (
+    <Dropdown
+      value={value}
+      onChange={onChange}
+      title="Mode"
+      size="sm"
+      menuWidth="w-44"
+      options={MODES.map((m) => {
+        const mm = MODE_META[m];
+        return {
+          value: m,
+          searchText: m,
+          label: (
+            <span className="flex items-center gap-2">
+              <span className={cls('h-2 w-2 shrink-0 rounded-full', mm.dot)} />
+              <span className={cls('font-medium', mm.text)}>{mm.label}</span>
+            </span>
+          ),
+          buttonLabel: (
+            <span className="flex items-center gap-1.5">
+              <span className={cls('h-2 w-2 shrink-0 rounded-full', mm.dot)} />
+              <span className={cls('font-medium', mm.text)}>{mm.label}</span>
+            </span>
+          ),
+        };
+      })}
+      className={cls(
+        'flex items-center justify-between gap-1.5 rounded-md border px-2 py-1 text-xs outline-none transition-colors',
+        meta.chip,
+      )}
+    />
+  );
 }
 
 function Pill({
