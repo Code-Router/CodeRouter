@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Blocks,
   ChevronRight,
@@ -401,20 +402,40 @@ function SectionLabel({ children, action }: { children: React.ReactNode; action?
 /** Projects "+" button → popup with "start from scratch" / "open existing". */
 function AddProjectMenu({ onCreate, onOpen }: { onCreate: () => void; onOpen: () => void }): React.ReactElement {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (
+        ref.current && !ref.current.contains(e.target as Node) &&
+        menuRef.current && !menuRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
+  const toggle = (): void => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 6, left: r.left });
+    setOpen(true);
+  };
+
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={btnRef}
+        onClick={toggle}
         title="Add a project folder"
         className={cls(
           'no-drag flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-panel2 hover:text-text',
@@ -423,28 +444,34 @@ function AddProjectMenu({ onCreate, onOpen }: { onCreate: () => void; onOpen: ()
       >
         <FolderPlus className="h-3.5 w-3.5" strokeWidth={2} />
       </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1.5 w-60 overflow-hidden rounded-lg border border-border bg-panel py-1 shadow-xl shadow-black/40">
-          <AddProjectRow
-            icon={Sparkles}
-            label="Start from scratch"
-            hint="Create a new empty folder"
-            onClick={() => {
-              setOpen(false);
-              onCreate();
-            }}
-          />
-          <AddProjectRow
-            icon={FolderOpen}
-            label="Use an existing folder"
-            hint="Pick a folder on your machine"
-            onClick={() => {
-              setOpen(false);
-              onOpen();
-            }}
-          />
-        </div>
-      )}
+      {open && pos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{ top: pos.top, left: pos.left }}
+            className="fixed z-50 w-60 overflow-hidden rounded-lg border border-border bg-panel py-1 shadow-xl shadow-black/40"
+          >
+            <AddProjectRow
+              icon={Sparkles}
+              label="Start from scratch"
+              hint="Create a new empty folder"
+              onClick={() => {
+                setOpen(false);
+                onCreate();
+              }}
+            />
+            <AddProjectRow
+              icon={FolderOpen}
+              label="Use an existing folder"
+              hint="Pick a folder on your machine"
+              onClick={() => {
+                setOpen(false);
+                onOpen();
+              }}
+            />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
