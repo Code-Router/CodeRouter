@@ -1,12 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Pause, Play, Square, X } from 'lucide-react';
+import {
+  ArrowUpCircle,
+  Bug,
+  Check,
+  FlaskConical,
+  Gauge,
+  Hammer,
+  ListChecks,
+  type LucideIcon,
+  Pause,
+  PenLine,
+  Play,
+  Repeat,
+  ShieldCheck,
+  Square,
+  X,
+} from 'lucide-react';
 import type { LoopIteration, LoopRecord, LoopSpec, LoopValidation } from '@coderouter/core';
 import { api, type PresetInfo, type ProjectSummary } from '../lib/api';
 import { useLoopEvents } from '../lib/events';
-import { EmptyState, Section, Spinner, StatusBadge, cls, money, timeAgo } from '../components/common';
+import { Section, Spinner, StatusBadge, cls, money, timeAgo } from '../components/common';
 import { Dropdown } from '../components/Dropdown';
 
-type View = { kind: 'list' } | { kind: 'new' } | { kind: 'detail'; cwd: string; id: string };
+type View = { kind: 'list' } | { kind: 'new'; request?: string } | { kind: 'detail'; cwd: string; id: string };
 
 export function LoopsPage({
   projects,
@@ -22,13 +38,19 @@ export function LoopsPage({
       <NewLoop
         projects={projects}
         defaultProject={project}
+        initialRequest={view.request}
         onCancel={() => setView({ kind: 'list' })}
         onOpen={(cwd, id) => setView({ kind: 'detail', cwd, id })}
       />
     );
   if (view.kind === 'detail')
     return <LoopDetail cwd={view.cwd} id={view.id} onBack={() => setView({ kind: 'list' })} />;
-  return <LoopList onNew={() => setView({ kind: 'new' })} onOpen={(cwd, id) => setView({ kind: 'detail', cwd, id })} />;
+  return (
+    <LoopList
+      onNew={(request) => setView({ kind: 'new', request })}
+      onOpen={(cwd, id) => setView({ kind: 'detail', cwd, id })}
+    />
+  );
 }
 
 // ---- list ----------------------------------------------------------
@@ -37,7 +59,7 @@ function LoopList({
   onNew,
   onOpen,
 }: {
-  onNew: () => void;
+  onNew: (request?: string) => void;
   onOpen: (cwd: string, id: string) => void;
 }): React.ReactElement {
   const [loops, setLoops] = useState<Array<LoopRecord & { project: string }> | null>(null);
@@ -48,23 +70,22 @@ function LoopList({
   useEffect(refresh, []);
   useLoopEvents(() => refresh(), []);
 
+  if (!loops) return <Spinner />;
+  if (loops.length === 0) return <LoopsEmpty onStart={onNew} />;
+
   return (
     <div>
-      <div className="mb-5 flex items-center justify-between">
+      <div className="mb-5 flex items-center justify-between gap-4">
         <p className="max-w-2xl text-sm text-muted">
           Describe an outcome in plain English. CodeRouter generates a bounded, self-verifying loop, you approve it,
           and it runs — verify → plan → edit → review → re-verify — until the check passes or a limit is hit.
         </p>
-        <button className="btn btn-primary" onClick={onNew}>
+        <button className="btn btn-primary shrink-0" onClick={() => onNew()}>
           + New loop
         </button>
       </div>
-      {!loops && <Spinner />}
-      {loops && loops.length === 0 && (
-        <EmptyState title="No loops yet" hint="Create one with “New loop” — e.g. “fix the failing auth tests”." />
-      )}
       <div className="grid gap-3">
-        {loops?.map((l) => (
+        {loops.map((l) => (
           <button
             key={l.id}
             onClick={() => onOpen(l.cwd, l.id)}
@@ -88,21 +109,146 @@ function LoopList({
   );
 }
 
+const LOOP_STEPS: Array<{ icon: LucideIcon; title: string; text: string }> = [
+  { icon: PenLine, title: 'Describe it', text: 'Say the outcome you want in plain English.' },
+  { icon: ListChecks, title: 'Approve the plan', text: 'Check the goal, success test, and safety limits it drafts.' },
+  { icon: Repeat, title: 'It loops', text: 'Edit → run your checks → fix what failed, on repeat.' },
+  { icon: Check, title: 'Stops when done', text: 'Ends the moment the check passes or a cap is reached.' },
+];
+
+const LOOP_EXAMPLES: Array<{ icon: LucideIcon; title: string; desc: string; prompt: string }> = [
+  {
+    icon: Bug,
+    title: 'Make the failing tests pass',
+    desc: 'Fix what’s red and keep running the suite until it’s all green.',
+    prompt:
+      'Fix the failing tests in this project with the smallest changes possible. Run the full test suite after every change and keep going until every test passes.',
+  },
+  {
+    icon: Gauge,
+    title: 'Get test coverage to 80%',
+    desc: 'Add tests for the weakest files, re-checking coverage each round.',
+    prompt:
+      'Raise test coverage to at least 80%. Each round, find the least-covered files, add meaningful unit tests for them, re-run the coverage report, and continue until the target is met.',
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Clear every type & lint error',
+    desc: 'Fix the codebase until type-check and lint come back clean.',
+    prompt:
+      'Resolve every TypeScript and ESLint error in the codebase. After each batch of fixes, re-run the type-checker and linter, and keep going until both report zero errors.',
+  },
+  {
+    icon: Hammer,
+    title: 'Build a feature until it ships',
+    desc: 'Implement a spec, looping build + tests until it all passes.',
+    prompt:
+      'Implement the following feature: <describe what you want>. Keep editing, then run the build and tests after each step, and don’t stop until it compiles and all tests pass.',
+  },
+  {
+    icon: ArrowUpCircle,
+    title: 'Upgrade a dependency safely',
+    desc: 'Bump a package and fix the fallout until everything passes.',
+    prompt:
+      'Upgrade <package name> to its latest version. Fix every breakage the upgrade causes, re-running the build and tests after each fix, until everything passes on the new version.',
+  },
+  {
+    icon: FlaskConical,
+    title: 'Squash a flaky test',
+    desc: 'Reproduce it, fix the root cause, confirm it passes consistently.',
+    prompt:
+      'Track down and fix the flaky test <test name>. Run it repeatedly to reproduce the intermittent failure, fix the underlying cause, then re-run it many times to confirm it passes consistently.',
+  },
+];
+
+/** Hand-holding empty state: what a loop is, how it works, and ready-to-run examples. */
+function LoopsEmpty({ onStart }: { onStart: (request?: string) => void }): React.ReactElement {
+  return (
+    <div className="mx-auto max-w-3xl pb-10">
+      <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-panel2 px-3 py-1 text-xs font-medium text-muted">
+        <Repeat className="h-3.5 w-3.5 text-accent" strokeWidth={2.5} />
+        Autonomous loops
+      </div>
+      <h2 className="text-2xl font-semibold tracking-tight">Hand off a goal — CodeRouter works until it’s actually done.</h2>
+      <p className="mt-3 text-sm leading-relaxed text-muted">
+        A loop is an agent on autopilot <span className="text-text">with a finish line</span>. You describe the outcome you
+        want — “make the tests pass”, “get coverage to 80%”, “clear all the type errors”. CodeRouter turns it into a plan
+        you approve, then repeats <span className="text-text">edit → run your checks → fix what failed</span> over and
+        over, stopping the instant the check truly passes (or it hits the cost and iteration caps you set). You see every
+        step and can pause or stop at any time — it can’t run away with your repo or your budget.
+      </p>
+
+      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {LOOP_STEPS.map((s, i) => {
+          const Icon = s.icon;
+          return (
+            <div key={s.title} className="card">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-panel2 text-accent">
+                  <Icon className="h-4 w-4" strokeWidth={2} />
+                </span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Step {i + 1}</span>
+              </div>
+              <div className="mt-2 text-sm font-medium">{s.title}</div>
+              <div className="mt-0.5 text-xs leading-relaxed text-muted">{s.text}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-8 mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Start from an example</h3>
+        <button className="text-xs text-muted transition-colors hover:text-text" onClick={() => onStart()}>
+          or start from a blank loop →
+        </button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {LOOP_EXAMPLES.map((ex) => {
+          const Icon = ex.icon;
+          return (
+            <button
+              key={ex.title}
+              onClick={() => onStart(ex.prompt)}
+              className="card group flex items-start gap-3 text-left transition-colors hover:border-accent"
+            >
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-panel2 text-accent transition-colors group-hover:bg-accent/15">
+                <Icon className="h-4 w-4" strokeWidth={2} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{ex.title}</span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-muted">{ex.desc}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-8 flex justify-center">
+        <button className="btn btn-primary" onClick={() => onStart()}>
+          + New loop
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---- new loop ------------------------------------------------------
 
 function NewLoop({
   projects,
   defaultProject,
+  initialRequest,
   onCancel,
   onOpen,
 }: {
   projects: ProjectSummary[];
   defaultProject: string | null;
+  initialRequest?: string;
   onCancel: () => void;
   onOpen: (cwd: string, id: string) => void;
 }): React.ReactElement {
   const [cwd, setCwd] = useState(defaultProject ?? projects[0]?.cwd ?? '');
-  const [request, setRequest] = useState('');
+  const [request, setRequest] = useState(initialRequest ?? '');
   const [preset, setPreset] = useState('safe');
   const [presets, setPresets] = useState<PresetInfo[]>([]);
   const [busy, setBusy] = useState(false);
