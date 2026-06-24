@@ -118,6 +118,10 @@ export function SettingsPage(): React.ReactElement {
         </div>
       </Section>
 
+      <Section title="Applying changes">
+        <AutoApply enabled={data.autoApply} onChange={(v) => api.setAutoApply(v).then(refresh)} />
+      </Section>
+
       <Section title="Spending limit">
         <SpendingLimit current={data.limits.monthlyUsd} onSave={(v) => api.setLimit(v).then(refresh)} />
       </Section>
@@ -156,6 +160,48 @@ function Appearance(): React.ReactElement {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function AutoApply({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => Promise<unknown> }): React.ReactElement {
+  const [saving, setSaving] = useState(false);
+  const toggle = async (next: boolean): Promise<void> => {
+    setSaving(true);
+    try {
+      await onChange(next);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="card flex items-center gap-3">
+      <div className="flex-1">
+        <div className="font-medium">Auto-accept file changes</div>
+        <div className="text-xs text-muted">
+          {enabled
+            ? 'Changes from each run are written to your files automatically.'
+            : 'Runs keep edits as a diff you review and accept before they touch your files.'}
+        </div>
+      </div>
+      <button
+        role="switch"
+        aria-checked={enabled}
+        disabled={saving}
+        onClick={() => void toggle(!enabled)}
+        className={cls(
+          'relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60',
+          enabled ? 'bg-accent' : 'bg-panel2 border border-border',
+        )}
+        title={enabled ? 'Turn off auto-accept' : 'Turn on auto-accept'}
+      >
+        <span
+          className={cls(
+            'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
+            enabled ? 'left-0.5 translate-x-5' : 'left-0.5',
+          )}
+        />
+      </button>
     </div>
   );
 }

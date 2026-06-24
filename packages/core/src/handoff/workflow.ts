@@ -6,12 +6,22 @@ import { diffWorktree } from '../sandbox/worktree.js';
 import { runValidators, summarize, type ValidatorSpec } from '../validate/run.js';
 import type {
   Classification,
+  Effort,
   RouteRef,
   RunBudget,
   RunOutcome,
   ValidatorResult,
 } from '../types.js';
 import { buildBrief, renderBriefAsPrompt } from './brief.js';
+
+/** Effort ladder, low -> max, used to escalate the fixer one tier at a time. */
+const EFFORT_ORDER: Effort[] = ['low', 'medium', 'high', 'max'];
+
+function bumpEffort(e: Effort, steps = 1): Effort {
+  const i = EFFORT_ORDER.indexOf(e);
+  const next = Math.min(EFFORT_ORDER.length - 1, Math.max(0, i) + steps);
+  return EFFORT_ORDER[next] ?? e;
+}
 
 export type HandoffOptions = {
   registry: ProviderRegistry;
@@ -33,6 +43,15 @@ export type HandoffOptions = {
   initialValidators?: ValidatorResult[];
   /** The route that produced the work we're handing off from. */
   fromRoute: RouteRef;
+  /**
+   * The run's effort. Drives fixer escalation: the first fix pass tries a
+   * cheap route (FrugalGPT-style cheap-first), and subsequent passes climb
+   * one tier at a time - the run's effort on pass 2, then a bump toward
+   * frontier on pass 3+ - so persistent failures get progressively stronger
+   * models instead of hammering the same cheap one. Bounded by the effort
+   * profile's pass/cost/time caps. Defaults to 'medium'.
+   */
+  effort?: Effort;
   /** Budget caps; passes stop when exhausted. */
   budget: RunBudget;
   /** Reviewer route (handoff-review) - if provided, used instead of picking. */
@@ -124,7 +143,7 @@ export async function runHandoff(opts: HandoffOptions): Promise<HandoffResult> {
     const route =
       opts.mode === 'review'
         ? opts.reviewerRoute ?? pickReviewerRoute(opts)
-        : pickFixerRoute(opts);
+        : pickFixerRoute(opts, pass);
     const priorDiff = await diffWorktree(opts.worktree).catch(() => undefined);
     const brief = buildBrief({
       intent:
@@ -207,8 +226,17 @@ export async function runHandoff(opts: HandoffOptions): Promise<HandoffResult> {
   };
 }
 
-function pickFixerRoute(opts: HandoffOptions): RouteRef {
-  return pick(opts.classification, opts.router, { forceCheap: true });
+function pickFixerRoute(opts: HandoffOptions, pass: number): RouteRef {
+  // Cheap-first cascade: pass 1 tries the cheapest capable fixer. If that
+  // didn't clear the validators, escalate one tier per pass (run effort on
+  // pass 2, a bump toward frontier on pass 3+), bounded by the budget's
+  // pass cap. Editable-only so the escalated model can actually patch files.
+  if (pass <= 1) {
+    return pick(opts.classification, opts.router, { forceCheap: true, requireEditable: true });
+  }
+  const base = opts.effort ?? 'medium';
+  const escalated = pass >= 3 ? bumpEffort(base) : base;
+  return pick(opts.classification, opts.router, { effort: escalated, requireEditable: true });
 }
 
 function pickReviewerRoute(opts: HandoffOptions): RouteRef {

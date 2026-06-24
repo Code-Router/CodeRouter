@@ -55,7 +55,7 @@ export { effortProfile } from './router/effort.js';
 export { deriveMemoryBias } from './router/bias.js';
 export { ProviderRegistry, defaultProviders } from './providers/index.js';
 export { whichSync } from './sandbox/which.js';
-export { resolveIntent, lookupModel, CATALOG } from './catalog/index.js';
+export { resolveIntent, explainIntent, lookupModel, CATALOG } from './catalog/index.js';
 export type { Intent, CatalogEntry } from './catalog/index.js';
 export {
   MODEL_CARDS,
@@ -68,6 +68,11 @@ export {
   taskFloor,
   computeQualityBias,
   observationsFromRuns,
+  computeLatencyBias,
+  latencyObservationsFromRuns,
+  computePolicyPreference,
+  policyObservationsFromRuns,
+  routingPolicy,
 } from './models/index.js';
 export type {
   ModelCard,
@@ -77,8 +82,15 @@ export type {
   SelectConstraints,
   Selection,
   Objective,
+  ValueWeights,
   ModelObservation,
+  LatencyObservation,
+  PolicyObservation,
+  RoutingPolicy,
+  Difficulty,
+  DifficultyBand,
 } from './models/index.js';
+export { estimateDifficulty } from './router/difficulty.js';
 export { runValidators, summarize, detectProject } from './validate/index.js';
 export { scanContext } from './context/index.js';
 export { loadProjectMemory, projectMemoryToSystemPrompt } from './memory/index.js';

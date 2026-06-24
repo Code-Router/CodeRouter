@@ -149,8 +149,12 @@ export const api = {
   removeKey: (name: string) => req<{ ok: boolean; removed?: boolean }>('DELETE', '/api/settings/key', { name }),
   setHost: (provider: string, enabled: boolean) => req('POST', '/api/settings/host', { provider, enabled }),
   setLimit: (monthlyUsd: number | null) => req('POST', '/api/settings/limit', { monthlyUsd }),
+  setAutoApply: (enabled: boolean) => req<{ ok: boolean; autoApply: boolean }>('POST', '/api/settings/auto-apply', { enabled }),
   setPreferred: (tier: string, provider: string | null, model: string | null) =>
     req('POST', '/api/settings/preferred-model', { tier, provider, model }),
+
+  // accept a reviewed diff into the project working tree
+  applyChanges: (cwd: string, diff: string) => req<{ ok: boolean; error?: string }>('POST', '/api/changes/apply', { cwd, diff }),
 };
 
 export type ChatStreamEvent =
@@ -167,6 +171,7 @@ export type ChatStreamEvent =
       tokensOut: number;
       diff: string | null;
       filesChanged: string[];
+      applied?: boolean;
     }
   | { type: 'error'; error: string };
 
@@ -341,6 +346,7 @@ export type SettingsReport = {
   searchProviders: ProviderSetting[];
   hosts: HostSetting[];
   limits: { monthlyUsd: number | null };
+  autoApply: boolean;
   preferredModels: { strong: { provider: string; model: string } | null; cheap: { provider: string; model: string } | null };
   availableModels: AvailableModel[];
   paths: { credentials: string; db: string };

@@ -1,8 +1,9 @@
 import { EDITABLE_ADAPTERS, resolveIntent } from '../catalog/resolve.js';
 import type { Intent } from '../catalog/types.js';
-import { type QualityTier, taskFloor } from '../models/index.js';
+import { routingPolicy } from '../models/index.js';
 import type { ProviderRegistry } from '../providers/registry.js';
-import type { Classification, CognitiveShape, Effort, RouteRef } from '../types.js';
+import type { Classification, Effort, RouteRef } from '../types.js';
+import { estimateDifficulty } from './difficulty.js';
 import { effortProfile } from './effort.js';
 import { matchInstant } from './instant.js';
 
@@ -43,6 +44,19 @@ export type RouterContext = {
    * into the quality-first selector at intent-resolution time.
    */
   qualityBias?: Map<string, number>;
+  /**
+   * Per-model speed-prior adjustments learned from observed run latencies
+   * (see `models/learn.ts`). Bounded + shrinkage-weighted; refines the
+   * `value` objective's static speed feature with real-world speed.
+   */
+  latencyBias?: Map<string, number>;
+  /**
+   * Per-task-class preference learning: `taskClass -> (model -> coding
+   * delta)` from local outcomes (see `computePolicyPreference`). The sub-map
+   * for the current task is folded into the quality bias so a model that
+   * reliably wins a task class gets nudged up for *that class only*.
+   */
+  policyBias?: Map<string, Map<string, number>>;
 };
 
 /** Read-only handle into the persistent memory shape the router actually uses. */
@@ -75,13 +89,13 @@ export type PickOptions = {
    * shortcuts (preferred pins, memory, instant) are skipped.
    */
   requireEditable?: boolean;
+  /**
+   * Raw user prompt, when the caller still has it. Optional: feeds a few
+   * extra cheap features (length, code fences, stack traces, hard keywords)
+   * into the difficulty estimator. Routing works fine without it.
+   */
+  prompt?: string;
 };
-
-const SHAPES_NEED_REASONING: (keyof CognitiveShape)[] = [
-  'deepReasoning',
-  'algorithmic',
-  'adversarial',
-];
 
 /**
  * Returns the cost-effective route across the cheap+strong tiers.
@@ -95,7 +109,6 @@ export function pick(
   opts: PickOptions = {},
 ): RouteRef {
   const effort = opts.effort ?? 'medium';
-  const profile = effortProfile(effort);
 
   // 1) Hard overrides from config.
   for (const o of ctx.routeOverrides ?? []) {
@@ -114,6 +127,7 @@ export function pick(
       requireVision: true,
       requireEditable: opts.requireEditable,
       qualityBias: ctx.qualityBias,
+      latencyBias: ctx.latencyBias,
     };
     const intentsToTry: Intent[] = ['balanced-agent', 'multi-file', 'huge-context', 'deep-reasoning', 'fast-cheap'];
     for (const intent of intentsToTry) {
@@ -129,108 +143,84 @@ export function pick(
     };
   }
 
-  // 2) Memory: preferred routes with stronger weight than the defaults.
-  //    Walk the list in success-rank order and return the first route
-  //    whose provider is still registered AND ready. Skipping the
-  //    readiness check here was a bug: a provider the user has since
-  //    disabled (e.g. /setup toggled Claude Code off ->
-  //    CODEROUTER_DISABLE_CLAUDE_CODE=1) would still get picked purely
-  //    because it had a strong historical success rate, silently
-  //    overriding the user's choice. Now a disabled / unconfigured
-  //    preferred route falls through to the catalog selection.
-  for (const top of ctx.memoryBias?.preferredRoutes ?? []) {
-    const ref = parseRouteRef(top.route);
-    if (!ref) continue;
-    if (isForbidden(ref, ctx)) continue;
-    const providerName = ref.via ?? ref.provider;
-    if (!ctx.registry.has(providerName) || !ctx.registry.isReady(providerName)) continue;
-    if (opts.requireEditable && !EDITABLE_ADAPTERS.has(ref.provider)) continue;
-    return { ...ref, rationale: `memory: ${top.reason}` };
-  }
+  // 2) Effective quality bias: local-outcome learning (`qualityBias`) plus
+  //    a *bounded* nudge toward routes this project has historically
+  //    succeeded on. This is demoted from the old hard short-circuit -
+  //    which returned the top memory route outright and pinned routing to a
+  //    single model, creating a self-reinforcing loop - to a tie-breaker
+  //    that flows through the value selector and can never override the
+  //    cost-aware policy. `forbiddenRoutes` and user pins remain hard.
+  const qualityBias = effectiveQualityBias(ctx, classification.taskType);
+  const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
+  const requireEditable = opts.requireEditable;
+  const editableOk = (r: RouteRef): boolean => !(requireEditable && !EDITABLE_ADAPTERS.has(r.provider));
 
   // 3) Instant routes (typo, format, commit-message...) always win.
   const instant = matchInstant(classification.rationale);
   if (instant.matched) {
-    const route = pickByHint(instant.pattern.route, ctx, opts.requireEditable);
-    if (route && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(route.provider))) {
-      return { ...route, rationale: instant.pattern.rationale };
-    }
+    const route = pickByHint(instant.pattern.route, ctx, requireEditable);
+    if (route && editableOk(route)) return { ...route, rationale: instant.pattern.rationale };
   }
 
   // 4) Force-cheap (handoff-fix); pick the cheapest capable route.
   if (opts.forceCheap) {
     const pref = usablePreferred(ctx, 'cheap');
-    if (pref && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(pref.provider))) {
-      return { ...pref, rationale: 'preferred-cheap: handoff fix' };
-    }
-    const cheap = pickByHint('cheap', ctx, opts.requireEditable);
+    if (pref && editableOk(pref)) return { ...pref, rationale: 'preferred-cheap: handoff fix' };
+    const cheap = pickByHint('cheap', ctx, requireEditable);
     if (cheap) return { ...cheap, rationale: 'force-cheap: handoff fix' };
   }
 
-  // 5) Cognitive-shape driven selection.
-  const { shape, taskType } = classification;
-  if (taskType === 'trivial' || taskType === 'docs') {
-    const pref = usablePreferred(ctx, 'cheap');
-    if (pref && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(pref.provider))) {
-      return { ...pref, rationale: `preferred-cheap:${taskType}` };
-    }
-    const cheap = pickByHint('cheap', ctx, opts.requireEditable);
-    if (cheap) return { ...cheap, rationale: `cheap-task:${taskType}` };
-  }
+  // 5) Per-task policy: difficulty (taskType + shape + effort) -> intent +
+  //    floor + objective + weights. This is the cost-aware brain - cheap and
+  //    strong models compete on a normalized value score (quality, price,
+  //    speed, context), so everyday work no longer always lands on the most
+  //    expensive frontier model. See `models/policies.ts`.
+  const { taskType } = classification;
+  const difficulty = estimateDifficulty(classification, effort, opts.prompt);
+  const policy = routingPolicy(classification, effort, difficulty);
 
-  // 5a) Shape-driven routing: ask the catalog to satisfy an intent.
-  //     The catalog handles "which concrete model" + "which configured
-  //     provider"; the router just picks the intent. Local host CLIs
-  //     (codex / claude_code / ollama) win ties because they sit at
-  //     the top of the catalog by convention.
-  const forbidRoutes = ctx.memoryBias?.forbiddenRoutes ?? [];
-  // Quality-first floor for real coding work: high/max effort demands a
-  // frontier model; everything non-trivial wants at least a strong one.
-  const floor: QualityTier = taskFloor(classification, effort);
-  const tryIntent = (intent: Intent, rationale: string): RouteRef | null => {
+  const resolveByPolicy = (intent: Intent, rationale: string): RouteRef | null => {
     const ref = resolveIntent(intent, ctx.registry, {
       forbidRoutes,
-      floor,
-      qualityBias: ctx.qualityBias,
-      requireEditable: opts.requireEditable,
+      floor: policy.floor,
+      objective: policy.objective,
+      weights: policy.weights,
+      qualityBias,
+      latencyBias: ctx.latencyBias,
+      requireEditable,
     });
     return ref ? { ...ref, rationale } : null;
   };
 
-  // When the shape calls for a strong model and the user pinned a
-  // preferred strong model, honor it before consulting the catalog.
+  // User pins beat the catalog: a cheap pin for cost policies, a strong pin
+  // for any policy that demands a strong/frontier model.
   const needsStrong =
-    shape.hugeContext > 0.7 ||
-    shape.multiFileTaste > 0.75 ||
-    (SHAPES_NEED_REASONING.some((k) => shape[k] >= 0.7) && profile.reasoningEffort !== 'minimal');
-  if (needsStrong) {
+    policy.floor === 'frontier' ||
+    policy.intent === 'multi-file' ||
+    policy.intent === 'deep-reasoning' ||
+    policy.intent === 'huge-context';
+  if (policy.objective === 'cost') {
+    const pref = usablePreferred(ctx, 'cheap');
+    if (pref && editableOk(pref)) return { ...pref, rationale: `preferred-cheap:${taskType}` };
+  } else if (needsStrong) {
     const pref = usablePreferred(ctx, 'strong');
-    if (pref && !(opts.requireEditable && !EDITABLE_ADAPTERS.has(pref.provider))) {
-      return { ...pref, rationale: 'preferred-strong' };
-    }
+    if (pref && editableOk(pref)) return { ...pref, rationale: 'preferred-strong' };
   }
 
-  if (shape.hugeContext > 0.7) {
-    const r = tryIntent('huge-context', `shape:hugeContext=${shape.hugeContext.toFixed(2)}`);
-    if (r) return r;
+  // Resolve the policy's intent, then fall back through progressively more
+  // general intents so we always return something when a specialized pool
+  // (e.g. 200k+ context) is empty.
+  const primary = resolveByPolicy(
+    policy.intent,
+    `policy:${policy.name} [difficulty=${difficulty.band}/${difficulty.score.toFixed(2)}] - ${policy.rationale}`,
+  );
+  if (primary) return primary;
+  if (policy.intent !== 'balanced-agent') {
+    const balanced = resolveByPolicy('balanced-agent', `policy:${policy.name} (fallback: balanced)`);
+    if (balanced) return balanced;
   }
-  if (shape.multiFileTaste > 0.75) {
-    const r = tryIntent('multi-file', `shape:multiFileTaste=${shape.multiFileTaste.toFixed(2)}`);
-    if (r) return r;
-  }
-  if (SHAPES_NEED_REASONING.some((k) => shape[k] >= 0.7) && profile.reasoningEffort !== 'minimal') {
-    const r = tryIntent(
-      'deep-reasoning',
-      `shape:deepReasoning=${shape.deepReasoning.toFixed(2)}, effort=${effort}`,
-    );
-    if (r) return r;
-  }
-
-  // 6) Default route: balanced agent. The catalog has the local CLIs
-  //    (codex / claude_code) tagged as balanced-agent contenders, so
-  //    we'll prefer those over native APIs automatically.
-  const def = tryIntent('balanced-agent', `default:agent (taskType=${taskType})`);
-  if (def) return def;
+  const cheap = pickByHint('cheap', ctx, requireEditable);
+  if (cheap && editableOk(cheap)) return { ...cheap, rationale: `policy:${policy.name} (fallback: cheap)` };
 
   // 7) Last resort: the first ready provider in the registry.
   for (const p of ctx.registry.list()) {
@@ -334,6 +324,7 @@ function pickByHint(
     return resolveIntent('local-offline', ctx.registry, {
       forbidRoutes,
       qualityBias: ctx.qualityBias,
+      latencyBias: ctx.latencyBias,
       requireEditable,
     });
   }
@@ -343,6 +334,7 @@ function pickByHint(
   return resolveIntent('fast-cheap', ctx.registry, {
     forbidRoutes,
     qualityBias: ctx.qualityBias,
+    latencyBias: ctx.latencyBias,
     requireEditable,
   });
 }
@@ -351,6 +343,44 @@ function parseRouteRef(route: string): RouteRef | null {
   const [provider, ...rest] = route.split(',');
   if (!provider || rest.length === 0) return null;
   return { provider: provider as RouteRef['provider'], model: rest.join(','), rationale: '', via: provider };
+}
+
+/** Bounded coding-score bonus for a route the project has succeeded on. */
+const MEMORY_PREFERENCE_BONUS = 6;
+const MEMORY_PREFERENCE_CAP = 12;
+
+/**
+ * Build the effective coding-score bias map the value selector sees. Folds
+ * three local-learning signals into one bounded `model -> delta` map:
+ *
+ *   1. `qualityBias` - global success/rating learning across all tasks.
+ *   2. `policyBias[taskClass]` - per-task-class preference learning, so a
+ *      model that reliably wins (say) refactors is nudged up for refactors.
+ *   3. memory `preferredRoutes` - a small bonus toward historically-good
+ *      routes. Demoted from the old hard short-circuit (which pinned routing
+ *      to one model and reinforced itself) to a tie-breaker that can only
+ *      tip genuinely close decisions. Forbidden / not-ready / unconfigured
+ *      routes contribute nothing.
+ */
+function effectiveQualityBias(ctx: RouterContext, taskClass: string): Map<string, number> | undefined {
+  const prefs = ctx.memoryBias?.preferredRoutes ?? [];
+  const perClass = ctx.policyBias?.get(taskClass);
+  if (prefs.length === 0 && !perClass) return ctx.qualityBias;
+
+  const out = new Map(ctx.qualityBias ?? []);
+  if (perClass) {
+    for (const [model, delta] of perClass) out.set(model, (out.get(model) ?? 0) + delta);
+  }
+  for (const top of prefs) {
+    const ref = parseRouteRef(top.route);
+    if (!ref) continue;
+    if (isForbidden(ref, ctx)) continue;
+    const providerName = ref.via ?? ref.provider;
+    if (!ctx.registry.has(providerName) || !ctx.registry.isReady(providerName)) continue;
+    const current = out.get(ref.model) ?? 0;
+    out.set(ref.model, Math.min(MEMORY_PREFERENCE_CAP, current + MEMORY_PREFERENCE_BONUS));
+  }
+  return out;
 }
 
 /**

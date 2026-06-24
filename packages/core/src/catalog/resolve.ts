@@ -5,9 +5,12 @@ import {
   type Objective,
   type QualityTier,
   type SelectConstraints,
+  type Selection,
+  type ValueWeights,
   INTENT_DEFAULTS,
   resolveCard,
   selectBest,
+  selectModels,
 } from '../models/index.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { RouteRef } from '../types.js';
@@ -81,8 +84,12 @@ export type ResolveIntentOptions = {
   floor?: QualityTier;
   /** Override the per-intent selection objective. */
   objective?: Objective;
+  /** Feature weights for the `value` objective (from the routing policy). */
+  weights?: ValueWeights;
   /** model id -> bounded coding-score delta from local outcomes (learn.ts). */
   qualityBias?: Map<string, number>;
+  /** model id -> speed-prior adjustment from observed latencies (learn.ts). */
+  latencyBias?: Map<string, number>;
 };
 
 /**
@@ -106,8 +113,69 @@ export function resolveIntent(
   registry: ProviderRegistry,
   opts: ResolveIntentOptions = {},
 ): RouteRef | null {
-  const forbidRoutes = new Set(opts.forbidRoutes ?? []);
   const prefer = opts.preferProviders ?? [];
+  const candidates = collectIntentCandidates(intent, registry, opts);
+  if (candidates.length === 0) return null;
+  const constraints = intentConstraints(intent, opts);
+
+  // preferProviders, when supplied, get first crack at the selection.
+  if (prefer.length > 0) {
+    const preferred = candidates.filter((c) => prefer.includes(c.via));
+    const sel = selectBest(preferred, constraints);
+    if (sel) {
+      return {
+        provider: sel.candidate.adapter,
+        model: sel.candidate.model,
+        via: sel.candidate.via,
+        rationale: `${intent}: ${sel.rationale}`,
+      };
+    }
+  }
+
+  const sel = selectBest(candidates, constraints);
+  if (!sel) return null;
+  return {
+    provider: sel.candidate.adapter,
+    model: sel.candidate.model,
+    via: sel.candidate.via,
+    rationale: `${intent}: ${sel.rationale}`,
+  };
+}
+
+/**
+ * Like `resolveIntent`, but returns the full ranked list of selections
+ * (winner first) instead of a single route. Powers `coderouter route
+ * --explain` so we can show the runners-up + their value breakdown.
+ */
+export function explainIntent(
+  intent: Intent,
+  registry: ProviderRegistry,
+  opts: ResolveIntentOptions = {},
+): Selection[] {
+  const candidates = collectIntentCandidates(intent, registry, opts);
+  if (candidates.length === 0) return [];
+  return selectModels(candidates, intentConstraints(intent, opts));
+}
+
+function intentConstraints(intent: Intent, opts: ResolveIntentOptions): SelectConstraints {
+  const d = INTENT_DEFAULTS[intent];
+  return {
+    requireVision: opts.requireVision,
+    minContextWindow: d.minContextWindow,
+    floor: opts.floor ?? d.floor,
+    objective: opts.objective ?? d.objective,
+    weights: opts.weights,
+    qualityBias: opts.qualityBias,
+    latencyBias: opts.latencyBias,
+  };
+}
+
+function collectIntentCandidates(
+  intent: Intent,
+  registry: ProviderRegistry,
+  opts: ResolveIntentOptions,
+): Candidate[] {
+  const forbidRoutes = new Set(opts.forbidRoutes ?? []);
 
   const candidates: Candidate[] = [];
   // Dynamic (OpenRouter) providers that participate in this intent, with
@@ -168,39 +236,7 @@ export function resolveIntent(
     }
   }
 
-  if (candidates.length === 0) return null;
-
-  const d = INTENT_DEFAULTS[intent];
-  const constraints: SelectConstraints = {
-    requireVision: opts.requireVision,
-    minContextWindow: d.minContextWindow,
-    floor: opts.floor ?? d.floor,
-    objective: opts.objective ?? d.objective,
-    qualityBias: opts.qualityBias,
-  };
-
-  // preferProviders, when supplied, get first crack at the selection.
-  if (prefer.length > 0) {
-    const preferred = candidates.filter((c) => prefer.includes(c.via));
-    const sel = selectBest(preferred, constraints);
-    if (sel) {
-      return {
-        provider: sel.candidate.adapter,
-        model: sel.candidate.model,
-        via: sel.candidate.via,
-        rationale: `${intent}: ${sel.rationale}`,
-      };
-    }
-  }
-
-  const sel = selectBest(candidates, constraints);
-  if (!sel) return null;
-  return {
-    provider: sel.candidate.adapter,
-    model: sel.candidate.model,
-    via: sel.candidate.via,
-    rationale: `${intent}: ${sel.rationale}`,
-  };
+  return candidates;
 }
 
 function toCandidate(

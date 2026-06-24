@@ -75,7 +75,17 @@ describe('pick()', () => {
     ]).toContain(r.model);
   });
 
-  it('routes hugeContext shape to Gemini Pro', () => {
+  it('routes a default everyday task to a strong-but-cheaper model (not Opus)', () => {
+    envSetup();
+    const ctx = { registry: new ProviderRegistry(defaultProviders()) };
+    const r = pick(classification({ taskType: 'feature' }), ctx);
+    // Cost-aware value routing: the default lands on a strong/GPT-5-class
+    // model, never the priciest frontier model for a generic edit.
+    expect(r.model).not.toBe('claude-opus-4-5');
+    expect(['claude-sonnet-4-5', 'gpt-5', 'gpt-5.5', 'gemini-2.5-pro']).toContain(r.model);
+  });
+
+  it('routes hugeContext shape to a long-context model', () => {
     envSetup();
     const ctx = { registry: new ProviderRegistry(defaultProviders()) };
     const r = pick(
@@ -92,10 +102,11 @@ describe('pick()', () => {
       }),
       ctx,
     );
-    expect(r.model).toBe('gemini-2.5-pro');
+    // Context-led + cost-aware: any of the big-context models is acceptable.
+    expect(['gemini-2.5-pro', 'gemini-2.5-flash', 'gpt-4.1']).toContain(r.model);
   });
 
-  it('routes deepReasoning shape to GPT-5 at high effort', () => {
+  it('routes deepReasoning shape to a frontier model at high effort', () => {
     envSetup();
     const ctx = { registry: new ProviderRegistry(defaultProviders()) };
     const r = pick(
@@ -113,12 +124,34 @@ describe('pick()', () => {
       ctx,
       { effort: 'high' },
     );
-    // Quality-first at a frontier floor: among ready providers the
-    // highest-coding model wins (Opus 4.5 edges the GPT-5 family).
+    // Frontier floor at high effort; the value score keeps us off the
+    // single priciest model when a near-equal cheaper frontier exists.
     expect(['claude-opus-4-5', 'gpt-5', 'gpt-5.5']).toContain(r.model);
   });
 
-  it('routes multiFileTaste shape to Opus', () => {
+  it('routes a moderate multiFile refactor to a cost-aware strong model', () => {
+    envSetup();
+    const ctx = { registry: new ProviderRegistry(defaultProviders()) };
+    const r = pick(
+      classification({
+        taskType: 'refactor',
+        shape: {
+          deepReasoning: 0.3,
+          multiFileTaste: 0.8,
+          hugeContext: 0.3,
+          adversarial: 0.2,
+          algorithmic: 0.1,
+          exploratory: 0.3,
+        },
+      }),
+      ctx,
+    );
+    // A moderate refactor (not maximally hard) clears the strong floor and
+    // a strong-but-cheaper model (Sonnet) out-values Opus on cost+speed.
+    expect(r.model).toBe('claude-sonnet-4-5');
+  });
+
+  it('escalates a multiFile refactor to a frontier model at high effort', () => {
     envSetup();
     const ctx = { registry: new ProviderRegistry(defaultProviders()) };
     const r = pick(
@@ -134,8 +167,35 @@ describe('pick()', () => {
         },
       }),
       ctx,
+      { effort: 'high' },
     );
+    // High effort raises the floor to frontier + weights quality heavily,
+    // so the top model wins for a hard refactor.
     expect(r.model).toBe('claude-opus-4-5');
+  });
+
+  it('escalates a hard medium-effort task to a frontier model via difficulty', () => {
+    envSetup();
+    const ctx = { registry: new ProviderRegistry(defaultProviders()) };
+    const r = pick(
+      classification({
+        taskType: 'refactor',
+        confidence: 0.4,
+        shape: {
+          deepReasoning: 0.85,
+          multiFileTaste: 0.6,
+          hugeContext: 0.2,
+          adversarial: 0.5,
+          algorithmic: 0.7,
+          exploratory: 0.4,
+        },
+      }),
+      ctx,
+      { prompt: 'redesign the distributed scheduler to fix a race condition / deadlock under load' },
+    );
+    // No single shape forces frontier, but the combined difficulty does.
+    expect(r.rationale).toMatch(/frontier|difficulty=frontier/);
+    expect(['claude-opus-4-5', 'gpt-5', 'gpt-5.5']).toContain(r.model);
   });
 
   it('honors a route override', () => {
@@ -249,7 +309,7 @@ describe('pick()', () => {
     expect(r.model).not.toBe('claude-opus-4-5');
   });
 
-  it('honors a memoryBias preferred route when its provider is ready', () => {
+  it('biases toward a memoryBias preferred route without hard-overriding', () => {
     envSetup();
     const ctx = {
       registry: new ProviderRegistry(defaultProviders()),
@@ -260,8 +320,10 @@ describe('pick()', () => {
       },
     };
     const r = pick(classification({ taskType: 'feature' }), ctx);
+    // The preference is now a bounded tie-breaker fed through the value
+    // selector (not a short-circuit), so it tips a close decision toward
+    // Sonnet rather than pinning routing to one model forever.
     expect(r.model).toBe('claude-sonnet-4-5');
-    expect(r.rationale).toContain('memory:');
   });
 
   it('skips a memoryBias preferred route whose provider was disabled', () => {

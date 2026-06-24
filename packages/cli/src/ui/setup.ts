@@ -56,6 +56,13 @@ type CredentialsFile = {
    */
   limits?: { monthlyUsd?: number };
   /**
+   * When true, file changes produced by a chat/agent run are applied to
+   * the project working tree automatically. When false (default), the run
+   * keeps its edits as a reviewable diff and the user accepts them
+   * explicitly from the desktop app. Stored globally like other prefs.
+   */
+  autoApply?: boolean;
+  /**
    * User's preferred models per tier. When set, routing leans on these
    * instead of the catalog default: `strong` is used for high-effort
    * intents (deep reasoning, multi-file, huge context), `cheap` for
@@ -229,6 +236,38 @@ export function getSpendingLimit(): { monthlyUsd: number | null } {
     return { monthlyUsd: typeof v === 'number' && v > 0 ? v : null };
   } catch {
     return { monthlyUsd: null };
+  }
+}
+
+/**
+ * Whether agent/chat file changes are applied automatically. Defaults to
+ * `false` (manual accept) so nothing touches the working tree without the
+ * user opting in.
+ */
+export function getAutoApply(): boolean {
+  try {
+    const file = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+    return file.autoApply === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Persist the auto-apply preference. */
+export function setAutoApply(enabled: boolean): void {
+  let existing: CredentialsFile = {};
+  try {
+    existing = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+  } catch {
+    // file doesn't exist or is malformed - rewrite from scratch
+  }
+  existing.autoApply = enabled === true;
+  mkdirSync(dirname(CREDENTIALS_PATH), { recursive: true });
+  writeFileSync(CREDENTIALS_PATH, `${JSON.stringify(existing, null, 2)}\n`, { encoding: 'utf8' });
+  try {
+    chmodSync(CREDENTIALS_PATH, 0o600);
+  } catch {
+    // permissions are best-effort (e.g. on Windows)
   }
 }
 

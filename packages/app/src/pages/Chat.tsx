@@ -6,7 +6,7 @@ import { Markdown } from '../components/Markdown';
 import { DiffView } from '../components/DiffView';
 import { Dropdown } from '../components/Dropdown';
 
-export type ChatChanges = { diff: string | null; filesChanged: string[] };
+export type ChatChanges = { diff: string | null; filesChanged: string[]; cwd: string | null; applied?: boolean };
 
 type Msg = {
   role: 'user' | 'assistant' | 'system';
@@ -16,6 +16,7 @@ type Msg = {
   pending?: boolean;
   diff?: string | null;
   filesChanged?: string[];
+  applied?: boolean;
 };
 
 const EFFORTS = ['low', 'medium', 'high', 'max'] as const;
@@ -103,8 +104,12 @@ export function ChatPage({
   useEffect(() => {
     if (!onChanges) return;
     const lastWithDiff = [...messages].reverse().find((m) => m.role === 'assistant' && (m.diff || m.filesChanged?.length));
-    onChanges(lastWithDiff ? { diff: lastWithDiff.diff ?? null, filesChanged: lastWithDiff.filesChanged ?? [] } : null);
-  }, [messages, onChanges]);
+    onChanges(
+      lastWithDiff
+        ? { diff: lastWithDiff.diff ?? null, filesChanged: lastWithDiff.filesChanged ?? [], cwd: project, applied: lastWithDiff.applied }
+        : null,
+    );
+  }, [messages, onChanges, project]);
 
   const send = async (): Promise<void> => {
     const prompt = input.trim();
@@ -139,6 +144,7 @@ export function ChatPage({
                 last.costUsd = e.costUsd;
                 last.diff = e.diff;
                 last.filesChanged = e.filesChanged;
+                last.applied = e.applied;
                 last.pending = false;
               }
               return next;
@@ -218,7 +224,7 @@ export function ChatPage({
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto px-1 pb-6 pt-2">
         {loadingHistory && <Spinner />}
         {messages.map((m, i) => (
-          <MessageRow key={i} msg={m} />
+          <MessageRow key={i} msg={m} onAccept={project ? (diff) => api.applyChanges(project, diff) : undefined} />
         ))}
       </div>
       {error && <div className="mb-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
@@ -227,7 +233,7 @@ export function ChatPage({
   );
 }
 
-function MessageRow({ msg }: { msg: Msg }): React.ReactElement {
+function MessageRow({ msg, onAccept }: { msg: Msg; onAccept?: (diff: string) => Promise<unknown> }): React.ReactElement {
   const [copied, setCopied] = useState(false);
   const copy = (): void => {
     void navigator.clipboard.writeText(msg.text);
@@ -247,7 +253,12 @@ function MessageRow({ msg }: { msg: Msg }): React.ReactElement {
       {msg.text ? <Markdown text={msg.text} /> : msg.pending ? <span className="text-sm text-muted">Thinking…</span> : null}
       {!msg.pending && (msg.diff || msg.filesChanged?.length) ? (
         <div className="mt-2">
-          <DiffView diff={msg.diff} filesChanged={msg.filesChanged} />
+          <DiffView
+            diff={msg.diff}
+            filesChanged={msg.filesChanged}
+            applied={msg.applied}
+            onAccept={msg.diff && onAccept ? () => onAccept(msg.diff as string).then(() => undefined) : undefined}
+          />
         </div>
       ) : null}
       {!msg.pending && msg.text && (

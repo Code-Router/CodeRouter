@@ -14,6 +14,7 @@ import type { AddressInfo } from 'node:net';
 import {
   removeCredential,
   saveCredential,
+  setAutoApply,
   setHostEnabled,
   setPreferredModel,
   setSpendingLimit,
@@ -218,6 +219,13 @@ export async function handle(req: IncomingMessage, res: ServerResponse, cwd: str
       const limit = typeof raw === 'number' && raw > 0 ? raw : null;
       setSpendingLimit(limit);
       return sendJson(res, 200, { ok: true, monthlyUsd: limit });
+    }
+
+    if (path === '/api/settings/auto-apply' && method === 'POST') {
+      if (typeof body.enabled !== 'boolean')
+        return sendJson(res, 400, { error: 'enabled must be a boolean' });
+      setAutoApply(body.enabled);
+      return sendJson(res, 200, { ok: true, autoApply: body.enabled });
     }
 
     if (path === '/api/settings/preferred-model' && method === 'POST') {

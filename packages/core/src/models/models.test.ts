@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { OpenRouterModel } from '../agent/providers/openrouter.js';
 import { findCard } from './cards.js';
-import { computeQualityBias, type ModelObservation } from './learn.js';
+import {
+  computeLatencyBias,
+  computePolicyPreference,
+  computeQualityBias,
+  type LatencyObservation,
+  type ModelObservation,
+  type PolicyObservation,
+} from './learn.js';
 import { resolveCard, UNKNOWN_CODING_PRIOR } from './resolve.js';
 import { type Candidate, selectBest } from './select.js';
 import { tierForCoding } from './tiers.js';
@@ -128,6 +135,39 @@ describe('selectBest', () => {
     const sel = selectBest([visionless, opus], { requireVision: true, requireTools: true });
     expect(sel?.candidate.model).toBe('anthropic/claude-opus-4-5');
   });
+
+  it('value objective prefers a strong-but-cheaper model over the priciest frontier', () => {
+    const opus = cand({ model: 'anthropic/claude-opus-4-5' }); // 93, ~$90/1M
+    const sonnet = cand({ model: 'anthropic/claude-sonnet-4-5' }); // 88, ~$18/1M
+    const sel = selectBest([opus, sonnet], {
+      floor: 'strong',
+      objective: 'value',
+      weights: { quality: 0.6, cheapness: 0.25, speed: 0.08, context: 0.05, reasoning: 0.02 },
+    });
+    // Sonnet's far lower price outweighs the 5-point coding gap.
+    expect(sel?.candidate.model).toBe('anthropic/claude-sonnet-4-5');
+  });
+
+  it('value objective: price changes the winner among equal-quality peers', () => {
+    const pricey = cand({ model: 'anthropic/claude-opus-4-5', pricePer1MIn: 30, pricePer1MOut: 90 });
+    const cheap = cand({
+      model: 'anthropic/claude-opus-4-5',
+      via: 'anthropic',
+      pricePer1MIn: 1,
+      pricePer1MOut: 2,
+    });
+    const sel = selectBest([pricey, cheap], { objective: 'value' });
+    expect(sel?.candidate.via).toBe('anthropic'); // cheaper wins on value
+  });
+
+  it('value objective still enforces the quality floor', () => {
+    const small = cand({ model: 'qwen/qwen3.5-9b', pricePer1MIn: 0.01, pricePer1MOut: 0.01 });
+    const strong = cand({ model: 'openai/gpt-4o' }); // 67 -> strong
+    const sel = selectBest([small, strong], { floor: 'strong', objective: 'value' });
+    // The dirt-cheap small model cannot win a strong-floor task on value.
+    expect(sel?.candidate.model).toBe('openai/gpt-4o');
+    expect(sel?.belowFloor).toBe(false);
+  });
 });
 
 describe('computeQualityBias (learn)', () => {
@@ -156,5 +196,62 @@ describe('computeQualityBias (learn)', () => {
     const many = computeQualityBias(obs('m', 50, true, 1)).get('m') ?? 0;
     const few = computeQualityBias(obs('f', 4, true, 1)).get('f') ?? 0;
     expect(many).toBeGreaterThan(few);
+  });
+});
+
+describe('computeLatencyBias (learn)', () => {
+  function lat(model: string, n: number, durationMs: number, tokensOut: number): LatencyObservation[] {
+    return Array.from({ length: n }, () => ({ model, durationMs, tokensOut }));
+  }
+
+  it('rewards a faster-than-median model and penalizes a slower one', () => {
+    // fast: 5 ms/token, slow: 50 ms/token; median pins the baseline.
+    const obs = [
+      ...lat('fast', 6, 5_000, 1_000),
+      ...lat('mid', 6, 20_000, 1_000),
+      ...lat('slow', 6, 50_000, 1_000),
+    ];
+    const bias = computeLatencyBias(obs);
+    expect((bias.get('fast') ?? 0)).toBeGreaterThan(0);
+    expect((bias.get('slow') ?? 0)).toBeLessThan(0);
+  });
+
+  it('ignores models below the sample floor', () => {
+    const bias = computeLatencyBias(lat('m', 2, 1_000, 100), { minSamples: 3 });
+    expect(bias.has('m')).toBe(false);
+  });
+
+  it('bounds the adjustment to maxAdjust', () => {
+    const obs = [...lat('zippy', 40, 1, 10_000), ...lat('plodding', 40, 100_000, 10)];
+    const bias = computeLatencyBias(obs, { maxAdjust: 0.25 });
+    for (const v of bias.values()) expect(Math.abs(v)).toBeLessThanOrEqual(0.25);
+  });
+});
+
+describe('computePolicyPreference (learn)', () => {
+  function pobs(
+    taskClass: string,
+    model: string,
+    n: number,
+    success: boolean,
+    rating: number | null = null,
+  ): PolicyObservation[] {
+    return Array.from({ length: n }, () => ({ taskClass, model, success, rating }));
+  }
+
+  it('learns preferences scoped per task class', () => {
+    const obs = [
+      ...pobs('refactor', 'good-refactorer', 30, true, 1),
+      ...pobs('docs', 'good-refactorer', 30, false, -1),
+    ];
+    const pref = computePolicyPreference(obs);
+    expect((pref.get('refactor')?.get('good-refactorer') ?? 0)).toBeGreaterThan(0);
+    // The same model is penalized on docs - the signal does not leak across classes.
+    expect((pref.get('docs')?.get('good-refactorer') ?? 0)).toBeLessThan(0);
+  });
+
+  it('omits task classes with too few samples', () => {
+    const pref = computePolicyPreference(pobs('feature', 'm', 2, true, 1), { minSamples: 3 });
+    expect(pref.has('feature')).toBe(false);
   });
 });

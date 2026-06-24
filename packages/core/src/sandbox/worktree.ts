@@ -421,6 +421,29 @@ export async function mergeWorktree(
 }
 
 /**
+ * Apply a unified diff (as produced by `diffWorktree`) directly to a
+ * repo's working tree. Used when the user reviews a chat's changes and
+ * chooses to accept them after the run's worktree is already gone — the
+ * diff text is the only surviving artifact, so we replay it against the
+ * host repo. Mirrors `mergeWorktree`'s plain→3way fallback. Throws with a
+ * readable message when the patch can't be applied (e.g. the files drifted).
+ */
+export async function applyPatchToRepo(repoPath: string, patch: string): Promise<void> {
+  if (!patch.trim()) return;
+  const apply = await exec('git', ['apply', '-'], { cwd: repoPath, input: patch });
+  if (apply.exitCode === 0) return;
+  const apply3 = await exec('git', ['apply', '--3way', '-'], { cwd: repoPath, input: patch });
+  if (apply3.exitCode !== 0) {
+    throw new CommandError(
+      `applyPatchToRepo: git apply failed: ${apply3.stderr.trim() || apply.stderr.trim()}`,
+      apply3,
+      'git',
+      ['apply'],
+    );
+  }
+}
+
+/**
  * Snapshots the worktree's current state into a new commit on its
  * branch and returns the resulting sha. Used by long-lived REPL
  * sessions to advance `baseSha` after each turn so that subsequent

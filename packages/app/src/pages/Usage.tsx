@@ -49,7 +49,9 @@ export function UsagePage(): React.ReactElement {
               <div key={r.id} className="flex items-center gap-3 px-3 py-2">
                 <span className="w-16 shrink-0 truncate text-xs text-muted">{r.mode}</span>
                 <span className="min-w-0 flex-1 truncate" title={r.prompt}>{r.prompt}</span>
-                <span className="hidden w-48 shrink-0 truncate text-xs text-muted lg:block" title={r.route}>{r.route}</span>
+                <span className="hidden w-48 shrink-0 text-xs text-muted lg:flex">
+                  <RouteLabel value={r.route} />
+                </span>
                 <span className="w-16 shrink-0 text-right text-xs tabular-nums">{money(r.costUsd)}</span>
                 <span className="w-16 shrink-0 text-right text-xs text-muted">{timeAgo(r.createdAt)}</span>
               </div>
@@ -58,6 +60,33 @@ export function UsagePage(): React.ReactElement {
         </div>
       </Section>
     </div>
+  );
+}
+
+/**
+ * Split a route/provider label into its provider and model parts.
+ * `byProvider` uses `provider · model`; recent-run routes use `provider,model`.
+ */
+function splitRoute(label: string): { provider: string; model: string } {
+  const sep = label.includes(' · ') ? ' · ' : label.includes(',') ? ',' : '';
+  if (!sep) return { provider: '', model: label };
+  const idx = label.indexOf(sep);
+  return { provider: label.slice(0, idx).trim(), model: label.slice(idx + sep.length).trim() };
+}
+
+/**
+ * Renders a route so the model name is always legible: the provider is a
+ * dim, shrinkable prefix while the model takes priority for width and only
+ * ellipsizes as a last resort.
+ */
+function RouteLabel({ value }: { value: string }): React.ReactElement {
+  const { provider, model } = splitRoute(value);
+  if (!model) return <span className="min-w-0 flex-1 truncate" title={value}>{value || '—'}</span>;
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-1.5" title={value}>
+      {provider && <span className="max-w-[6rem] shrink truncate text-[11px] text-muted/80">{provider}</span>}
+      <span className="min-w-0 flex-1 truncate font-mono text-xs">{model}</span>
+    </span>
   );
 }
 
@@ -85,7 +114,7 @@ function BreakdownTable({ title, nameLabel, rows }: { title: string; nameLabel: 
           {rows.map((r) => (
             <div key={r.key} className="px-3 py-2">
               <div className="flex items-center gap-3">
-                <span className="min-w-0 flex-1 truncate" title={r.label}>{r.label}</span>
+                <RouteLabel value={r.label} />
                 <span className="w-10 shrink-0 text-right tabular-nums text-muted">{r.runs}</span>
                 <span className="w-16 shrink-0 text-right tabular-nums">{money(r.costUsd)}</span>
               </div>

@@ -4,8 +4,9 @@ import { existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode } from '@coderouter/core';
-import { PRESETS, discoverVerifiers, generateLoopSpec, openStore, resolveDbPath, validateLoopSpec } from '@coderouter/core';
+import { PRESETS, discoverVerifiers, generateLoopSpec, openStore, resolveDbPath, sandbox, validateLoopSpec } from '@coderouter/core';
 import { CLI_VERSION } from '../version.js';
+import { getAutoApply } from '../ui/setup.js';
 import { handle as handleDashboard, readJson, sendJson } from '../dashboard/server.js';
 import { buildExecutionEnv, executeRun } from '../runtime.js';
 import { buildAllLoops, buildChatDetail, buildChatsReport, buildProjectsReport } from './data.js';
@@ -218,6 +219,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
     return handleExec(req, res, cwd);
   }
 
+  // POST /api/changes/apply -> apply a reviewed diff to the project's
+  // working tree (the "Accept changes" action).
+  if (method === 'POST' && path === '/api/changes/apply') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handleChangesApply(req, res, cwd);
+  }
+
   // ---- loops ------------------------------------------------------
   if (path === '/api/loops' || path.startsWith('/api/loops/')) {
     const handled = await handleLoops(req, res, cwd, method, path, url);
@@ -274,13 +282,18 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
     const prior = store.chats.messages(sessionId).map((m) => ({ role: m.role, content: m.text }) as ChatMessage);
     store.db.close();
 
+    // Honor an explicit per-request override; otherwise fall back to the
+    // global auto-apply preference. When false, the run keeps its edits
+    // as a reviewable diff the user accepts later via /api/changes/apply.
+    const apply = typeof body.apply === 'boolean' ? body.apply : getAutoApply();
+
     const { output } = await executeRun({
       cwd: project,
       prompt,
       mode,
       effort,
       sessionId,
-      apply: false,
+      apply,
       onChunk: (text) => send({ type: 'chunk', text }),
       priorMessages: prior,
     });
@@ -297,11 +310,30 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
       tokensOut: output.tokensOut,
       diff: output.diff ?? null,
       filesChanged: output.filesChanged ?? [],
+      applied: apply,
     });
   } catch (e) {
     send({ type: 'error', error: e instanceof Error ? e.message : String(e) });
   }
   res.end();
+}
+
+/**
+ * Apply a previously-produced diff to a project's working tree. Powers
+ * the "Accept changes" button: a chat run that wasn't auto-applied keeps
+ * its edits as a diff, and this replays that patch against the host repo.
+ */
+async function handleChangesApply(req: IncomingMessage, res: ServerResponse, daemonCwd: string): Promise<void> {
+  const body = await readJson(req);
+  const project = String(body.cwd ?? daemonCwd);
+  const diff = typeof body.diff === 'string' ? body.diff : '';
+  if (!diff.trim()) return sendJson(res, 400, { error: 'diff required' });
+  try {
+    await sandbox.applyPatchToRepo(project, diff);
+    return sendJson(res, 200, { ok: true });
+  } catch (e) {
+    return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 /**

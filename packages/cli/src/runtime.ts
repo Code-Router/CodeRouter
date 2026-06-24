@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import {
   buildReport,
+  computeLatencyBias,
+  computePolicyPreference,
   computeQualityBias,
   defaultProviders,
   deriveMemoryBias,
+  latencyObservationsFromRuns,
   loadConfig,
   observationsFromRuns,
+  policyObservationsFromRuns,
   openStore,
   ProviderRegistry,
   registerProject,
@@ -144,7 +148,10 @@ export async function buildExecutionEnv(cwd: string): Promise<{
   const store = await openStore(resolveDbPath(cwd));
   registerProject(cwd);
   const bias = deriveMemoryBias(store, { taskType: 'feature' });
-  const qualityBias = computeQualityBias(observationsFromRuns(store.runs.list(500)));
+  const recentRuns = store.runs.list(500);
+  const qualityBias = computeQualityBias(observationsFromRuns(recentRuns));
+  const latencyBias = computeLatencyBias(latencyObservationsFromRuns(recentRuns));
+  const policyBias = computePolicyPreference(policyObservationsFromRuns(recentRuns));
   return {
     registry,
     store,
@@ -153,6 +160,8 @@ export async function buildExecutionEnv(cwd: string): Promise<{
       memoryBias: bias,
       preferredModels: resolvePreferredModels(registry),
       qualityBias,
+      latencyBias,
+      policyBias,
     },
   };
 }

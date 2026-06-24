@@ -33,6 +33,7 @@ import {
   CREDENTIALS_PATH,
   SEARCH_PROVIDERS,
   SETUP_PROVIDERS,
+  getAutoApply,
   getPreferredModels,
   getSpendingLimit,
   type SetupProvider,
@@ -143,6 +144,8 @@ export type SettingsReport = {
   searchProviders: ProviderSetting[];
   hosts: HostSetting[];
   limits: { monthlyUsd: number | null };
+  /** Whether agent/chat file changes are applied automatically (vs. reviewed). */
+  autoApply: boolean;
   preferredModels: {
     strong: { provider: string; model: string } | null;
     cheap: { provider: string; model: string } | null;
@@ -432,6 +435,7 @@ export function buildSettingsReport(cwd: string): SettingsReport {
     searchProviders,
     hosts,
     limits: getSpendingLimit(),
+    autoApply: getAutoApply(),
     preferredModels: getPreferredModels(),
     availableModels: listAvailableModels(),
     paths: { credentials: CREDENTIALS_PATH, db: resolveDbPath(cwd) },

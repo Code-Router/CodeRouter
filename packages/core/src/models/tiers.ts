@@ -41,10 +41,45 @@ export function floorScore(tier: QualityTier): number {
 
 /**
  * Selection objective:
- *   - `quality`: rank by coding score, cost only breaks ties (default).
- *   - `cost`: cheapest model that still clears the quality floor.
+ *   - `quality`: rank by coding score, cost only breaks ties. Used by
+ *     tournaments / `pickStrong` where we deliberately want the top model.
+ *   - `cost`: cheapest model that still clears the quality floor. Used for
+ *     genuinely trivial work.
+ *   - `value`: rank by a normalized weighted score across quality, price,
+ *     speed and context (see `ValueWeights`). This is the default for real
+ *     coding work - it keeps cost/speed first-class so a marginally weaker
+ *     but far cheaper/faster model can win, instead of always defaulting to
+ *     the single highest-scoring (and most expensive) frontier model.
  */
-export type Objective = 'quality' | 'cost';
+export type Objective = 'quality' | 'cost' | 'value';
+
+/**
+ * Feature weights for the `value` objective. Each feature is normalized to
+ * [0,1] in the selector; weights typically sum to ~1 so scores stay
+ * comparable across policies. The per-task policy table (`policies.ts`)
+ * owns the concrete weight vectors.
+ */
+export type ValueWeights = {
+  /** Coding quality (benchmark prior + local learning), normalized /100. */
+  quality: number;
+  /** Cheapness: 1 for free, decaying toward 0 as price climbs. */
+  cheapness: number;
+  /** Speed prior: faster for cheap/non-reasoning models. */
+  speed: number;
+  /** Context headroom, normalized against a 256k ceiling. */
+  context: number;
+  /** Whether the model is a reasoning ("thinking") model. */
+  reasoning: number;
+};
+
+/** Sensible balanced default when a caller asks for `value` without weights. */
+export const DEFAULT_VALUE_WEIGHTS: ValueWeights = {
+  quality: 0.7,
+  cheapness: 0.15,
+  speed: 0.05,
+  context: 0.07,
+  reasoning: 0.03,
+};
 
 export type IntentDefaults = {
   /** Minimum coding tier we want before falling back to "best available". */
@@ -70,9 +105,18 @@ export const INTENT_DEFAULTS: Record<Intent, IntentDefaults> = {
 };
 
 /**
- * Quality floor for a task, given its classification + effort. Real work
- * leans frontier; trivial/docs allow cheaper. Higher effort raises the
- * floor so "high"/"max" runs never quietly drop to a mid model.
+ * Quality floor for a task, given its classification + effort. This is the
+ * minimum tier we'll accept before falling back to "best available"; the
+ * `value` objective then optimizes cost/speed *within* the eligible pool.
+ *
+ * Crucially this is only a floor, NOT a target: at medium effort everyday
+ * work clears a `strong` floor and the value score is free to pick a
+ * cheaper strong model over the priciest frontier one. Only explicit
+ * high/max effort (or genuinely hard shapes, handled by the policy table)
+ * raises the floor to `frontier`. Trivial/docs drop to `mid`.
+ *
+ * The per-task policy table (`policies.ts`) is the primary owner of the
+ * floor for interactive routing; this remains the simple fallback.
  */
 export function taskFloor(classification: Classification, effort: Effort): QualityTier {
   const { taskType } = classification;

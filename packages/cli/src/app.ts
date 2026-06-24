@@ -79,6 +79,7 @@ export async function runCli(argv: string[]): Promise<void> {
     .description('classify a prompt and show the chosen route (no execution)')
     .option('-e, --effort <effort>', 'low|medium|high|max', 'medium')
     .option('-c, --cwd <path>', 'working directory', process.cwd())
+    .option('--explain', 'show difficulty, policy, value breakdown, and runners-up', false)
     .action(async (promptParts: string[], opts) => {
       await runRouteCommand({ prompt: promptParts.join(' '), ...opts });
     });

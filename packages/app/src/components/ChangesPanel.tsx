@@ -1,6 +1,7 @@
 import React from 'react';
 import { GitCompare } from 'lucide-react';
 import { DiffView } from './DiffView';
+import { api } from '../lib/api';
 import type { ChatChanges } from '../pages/Chat';
 
 /** Side panel mirroring the active chat's file changes (Codex "Files"). */
@@ -14,7 +15,17 @@ export function ChangesPanel({ changes }: { changes: ChatChanges | null }): Reac
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {has ? (
-          <DiffView diff={changes!.diff} filesChanged={changes!.filesChanged} defaultOpen />
+          <DiffView
+            diff={changes!.diff}
+            filesChanged={changes!.filesChanged}
+            defaultOpen
+            applied={changes!.applied}
+            onAccept={
+              changes!.diff && changes!.cwd
+                ? () => api.applyChanges(changes!.cwd as string, changes!.diff as string).then(() => undefined)
+                : undefined
+            }
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center px-4 text-center text-sm text-muted">
             <GitCompare className="mb-2 h-6 w-6 opacity-40" />

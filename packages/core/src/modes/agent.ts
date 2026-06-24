@@ -84,7 +84,12 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   }
 
   const corpus = await loadSeedCorpus();
-  const classifier = new ClassifierCascade({ corpus });
+  // Optional LLM judge (cascade stage 3): only when a budget is present and
+  // we'd actually run the classifier. The cascade invokes it solely on
+  // low-confidence prompts and caches the result by hash, so this is a
+  // bounded, occasional cost - and a cheap chat model, never a heavy CLI.
+  const llmJudge = ctx.budget && !input.fast && !instant.matched ? buildCheapJudge(ctx) : undefined;
+  const classifier = new ClassifierCascade({ corpus, llmJudge });
 
   const classification = input.fast
     ? fastClassification(input.prompt)
@@ -99,7 +104,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
 
   let route = input.route
     ? parseRoute(input.route)
-    : pick(classification, ctx.router, { effort, requiresVision });
+    : pick(classification, ctx.router, { effort, requiresVision, prompt: input.prompt });
 
   // If vision was required but no vision model is available, the router
   // hands back a `no-vision-model` sentinel (provider 'none'). Warn,
@@ -113,7 +118,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       data: { warning: 'no vision-capable model is enabled; running text-only — enable one in /setup' },
     });
     images.length = 0; // clear so we don't try to attach
-    route = input.route ? parseRoute(input.route) : pick(classification, ctx.router, { effort });
+    route = input.route ? parseRoute(input.route) : pick(classification, ctx.router, { effort, prompt: input.prompt });
   }
 
   const adapter: Adapter = ctx.resolveAdapter
@@ -358,6 +363,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
         classification,
         originalPrompt: input.prompt,
         fromRoute: route,
+        effort,
         // Pre-computed validators - skips the redundant 2-3 min
         // re-run inside runHandoff that used to dominate the
         // fix-pass total. We just ran them; trust the result.
@@ -491,6 +497,48 @@ function parseRoute(route: string): RouteRef {
     rationale: 'explicit route override',
     via: provider,
   };
+}
+
+/**
+ * Probe classification used only to pick the cheapest available chat route
+ * for the LLM judge. `forceCheap` short-circuits to a fast-cheap model.
+ */
+const JUDGE_PROBE = {
+  taskType: 'trivial' as const,
+  shape: {
+    deepReasoning: 0,
+    multiFileTaste: 0,
+    hugeContext: 0,
+    adversarial: 0,
+    algorithmic: 0,
+    exploratory: 0,
+  },
+  confidence: 1,
+  rationale: 'classifier judge probe',
+  source: 'rules' as const,
+  hash: 'judge-probe',
+};
+
+/**
+ * Build a cheap chat adapter to act as the classifier's stage-3 LLM judge,
+ * or `undefined` when none is available. We route `forceCheap` to land on a
+ * fast-cheap model (Haiku / 4o-mini / Flash) and refuse heavyweight editing
+ * CLIs (`canEdit`) - spinning up Claude Code / Codex just to classify a
+ * prompt would be slow and expensive, defeating the purpose.
+ */
+function buildCheapJudge(ctx: ModeContext): Adapter | undefined {
+  try {
+    const route = pick(JUDGE_PROBE, ctx.router, { forceCheap: true });
+    if (!route || !route.model || route.model === 'no-vision-model') return undefined;
+    const adapter = ctx.resolveAdapter
+      ? ctx.resolveAdapter(route)
+      : ctx.registry.resolve(`${route.via ?? route.provider},${route.model}`).adapter;
+    // Use a chat-only model as the judge; never a heavyweight editing CLI.
+    if (adapter.capabilities.canEdit) return undefined;
+    return adapter;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

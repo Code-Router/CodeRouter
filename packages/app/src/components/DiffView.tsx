@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronRight, FileDiff } from 'lucide-react';
+import { Check, ChevronRight, FileDiff, Loader2 } from 'lucide-react';
 import { cls } from './common';
 
 type FileDiffEntry = {
@@ -40,17 +40,41 @@ export function DiffView({
   diff,
   filesChanged,
   defaultOpen,
+  applied,
+  onAccept,
 }: {
   diff?: string | null;
   filesChanged?: string[];
   defaultOpen?: boolean;
+  /** When true, the changes are already on disk (auto-applied or accepted). */
+  applied?: boolean;
+  /** When provided, shows an "Accept changes" action that applies the diff. */
+  onAccept?: () => Promise<void> | void;
 }): React.ReactElement | null {
+  const [accepting, setAccepting] = useState(false);
+  const [accepted, setAccepted] = useState(false);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
   const files = useMemo(() => (diff ? parseDiff(diff) : []), [diff]);
   const fileCount = files.length || filesChanged?.length || 0;
   if (fileCount === 0) return null;
 
   const totalAdd = files.reduce((n, f) => n + f.additions, 0);
   const totalDel = files.reduce((n, f) => n + f.deletions, 0);
+  const isApplied = applied || accepted;
+
+  const accept = async (): Promise<void> => {
+    if (!onAccept || accepting) return;
+    setAccepting(true);
+    setAcceptError(null);
+    try {
+      await onAccept();
+      setAccepted(true);
+    } catch (e) {
+      setAcceptError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAccepting(false);
+    }
+  };
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-panel">
@@ -60,11 +84,32 @@ export function DiffView({
           Edited {fileCount} file{fileCount === 1 ? '' : 's'}
         </span>
         {(totalAdd > 0 || totalDel > 0) && (
-          <span className="ml-auto font-mono text-xs">
+          <span className="font-mono text-xs">
             <span className="text-ok">+{totalAdd}</span> <span className="text-bad">−{totalDel}</span>
           </span>
         )}
+        <div className="ml-auto flex items-center gap-2">
+          {isApplied ? (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-ok">
+              <Check className="h-3.5 w-3.5" />
+              {applied ? 'Applied' : 'Accepted'}
+            </span>
+          ) : onAccept ? (
+            <button
+              onClick={() => void accept()}
+              disabled={accepting}
+              className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-accent/80 disabled:opacity-60"
+              title="Apply these changes to your files"
+            >
+              {accepting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {accepting ? 'Applying…' : 'Accept'}
+            </button>
+          ) : null}
+        </div>
       </div>
+      {acceptError && (
+        <div className="border-b border-bad/40 bg-bad/10 px-3 py-1.5 text-xs text-bad">{acceptError}</div>
+      )}
       {files.length > 0 ? (
         <div className="divide-y divide-border">
           {files.map((f) => (
