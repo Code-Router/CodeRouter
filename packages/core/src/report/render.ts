@@ -5,9 +5,13 @@ import type { Report } from './types.js';
  * colors; the MCP server emits the same strings unstyled.
  */
 
-export function renderReportText(r: Report, opts?: { includeText?: boolean }): string {
+export function renderReportText(
+  r: Report,
+  opts?: { includeText?: boolean; includePlanExtras?: boolean },
+): string {
   const lines: string[] = [];
   const includeText = opts?.includeText ?? true;
+  const includePlanExtras = opts?.includePlanExtras ?? true;
 
   // The plain-text rendering is optimised for "read the answer fast";
   // bookkeeping (run id, mode, classification, route, rationale, cost)
@@ -78,6 +82,17 @@ export function renderReportText(r: Report, opts?: { includeText?: boolean }): s
     }
   }
 
+  if (includePlanExtras && r.openQuestions?.length) {
+    lines.push('');
+    lines.push('open questions (confirm before executing):');
+    for (const q of r.openQuestions) lines.push(`  ? ${q}`);
+  }
+
+  if (includePlanExtras && r.planPath) {
+    lines.push('');
+    lines.push(`plan saved: ${r.planPath}`);
+  }
+
   if (r.escalationHint) {
     lines.push('');
     lines.push(`hint: ${r.escalationHint}`);
@@ -110,8 +125,11 @@ export function renderReportText(r: Report, opts?: { includeText?: boolean }): s
  * already rendered `r.text` live and don't want it duplicated at
  * the end of the run.
  */
-export function renderReportFooterText(r: Report): string {
-  return renderReportText(r, { includeText: false });
+export function renderReportFooterText(
+  r: Report,
+  opts?: { includePlanExtras?: boolean },
+): string {
+  return renderReportText(r, { includeText: false, includePlanExtras: opts?.includePlanExtras });
 }
 
 function pad(s: string, n: number): string {

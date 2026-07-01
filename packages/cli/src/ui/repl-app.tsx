@@ -125,7 +125,8 @@ type HistoryItem =
   | { id: number; kind: 'report'; text: string }
   | { id: number; kind: 'log'; entries: LogEntry[] }
   | { id: number; kind: 'changes'; stats: FileStats[] }
-  | { id: number; kind: 'question'; payload: AskUserQuestionPayload };
+  | { id: number; kind: 'question'; payload: AskUserQuestionPayload }
+  | { id: number; kind: 'open-questions'; questions: string[] };
 
 type WizardStep = 'idle' | 'trust' | 'confirm' | 'pick' | 'key' | 'review';
 
@@ -784,6 +785,16 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   }
 
   /**
+   * Highlight the open questions a plan flagged in a bordered callout so
+   * they don't get lost in the streamed plan body. These are decisions the
+   * user should confirm before executing the plan.
+   */
+  function pushOpenQuestions(questions: string[]): void {
+    if (questions.length === 0) return;
+    appendHistory({ id: idRef.current++, kind: 'open-questions', questions: [...questions] });
+  }
+
+  /**
    * Push a multi-line system block summarising security findings.
    * Worst severity drives the tone (high → red, warn → yellow,
    * info → gray) so the user can spot trouble at a glance.
@@ -1052,13 +1063,27 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
 
       // Validators / citations / escalation hints still live in the
       // report footer; the answer body has already been streamed.
-      const footer = renderReportFooterText({
-        ...report,
-        // Strip filesChanged so the renderer doesn't re-emit a
-        // textual list - the `changes` history item now owns that.
-        filesChanged: undefined,
-      } as typeof report);
+      const footer = renderReportFooterText(
+        {
+          ...report,
+          // Strip filesChanged so the renderer doesn't re-emit a
+          // textual list - the `changes` history item now owns that.
+          filesChanged: undefined,
+        } as typeof report,
+        // Open questions + the plan-saved path get their own highlighted
+        // history items below, so keep them out of the dim footer.
+        { includePlanExtras: false },
+      );
       if (footer.trim()) pushReport(footer);
+
+      // Highlight the planner's open questions in a bordered callout, then
+      // point the user at the saved, editable plan file.
+      if (report.openQuestions && report.openQuestions.length > 0) {
+        pushOpenQuestions(report.openQuestions);
+      }
+      if (report.planPath) {
+        pushSystem(`  plan saved to ${report.planPath}`, 'success');
+      }
 
       // Decide what to do with the changes:
       //   1. No artifact / no files → nothing to do.
@@ -2034,6 +2059,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
             {item.kind === 'log' && <LogStream entries={item.entries} frozen />}
             {item.kind === 'changes' && <ChangesPanel stats={item.stats} />}
             {item.kind === 'question' && <QuestionPanel payload={item.payload} />}
+            {item.kind === 'open-questions' && <OpenQuestionsPanel questions={item.questions} />}
             {item.kind === 'report' && (
               <Box flexDirection="column">
                 {item.text.split('\n').map((l, i) => (
@@ -2393,6 +2419,28 @@ function QuestionPanel({
           {'reply with your answer; the conversation will resume with full context'}
         </Text>
       </Box>
+    </Box>
+  );
+}
+
+/**
+ * Highlighted callout for the open questions a plan flagged. Rendered as a
+ * bordered box so the decisions the plan couldn't make on its own stand out
+ * from the streamed plan body and the user knows to confirm them before
+ * executing.
+ */
+function OpenQuestionsPanel({ questions }: { questions: string[] }): React.ReactElement {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+      <Text color="yellow" bold>
+        {questions.length === 1 ? 'open question — confirm before executing:' : `open questions (${questions.length}) — confirm before executing:`}
+      </Text>
+      {questions.map((q, qi) => (
+        <Text key={`oq-${qi}`}>
+          <Text color="yellow" bold>{'  ? '}</Text>
+          <Text>{q}</Text>
+        </Text>
+      ))}
     </Box>
   );
 }

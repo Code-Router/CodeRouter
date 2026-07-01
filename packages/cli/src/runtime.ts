@@ -15,6 +15,7 @@ import {
   registerProject,
   resolveDbPath,
   runMode,
+  savePlanFile,
 } from '@coderouter/core';
 import type {
   ActivityEvent,
@@ -221,6 +222,15 @@ export async function executeRun(opts: CliRunOpts): Promise<{
       },
     );
     const report = buildReport(opts.prompt, output);
+    // Persist the plan to `.coderouter/plans/<id>.plan.md` so the user has an
+    // editable, re-runnable artifact instead of ephemeral terminal output.
+    if (output.planFile) {
+      try {
+        report.planPath = await savePlanFile(opts.cwd, output.planFile);
+      } catch {
+        // best-effort: a plan we can't write to disk still renders inline
+      }
+    }
     persistRun(store, { ...opts, sessionId }, output, report);
     persistChat(store, { ...opts, sessionId }, output);
     return { report, output, store };

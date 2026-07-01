@@ -94,6 +94,7 @@ export async function runPlanMode(input: ModeInput, ctx: ModeContext): Promise<M
   planFile.frontmatter.status = 'ready';
   planFile.frontmatter.estimatedCostUsd = res.costUsd;
   planFile.frontmatter.phases = extractPhases(res.text);
+  const openQuestions = extractOpenQuestions(res.text);
   progress({ phase: 'plan/phase6', stage: 'done', index: 3, total: 3 });
 
   const escalationHint = detectEscalation(input.prompt, classification, manifest.entries.length);
@@ -104,6 +105,7 @@ export async function runPlanMode(input: ModeInput, ctx: ModeContext): Promise<M
     runId,
     text: planFile.body,
     planFile,
+    openQuestions,
     classification,
     contextManifest: manifest,
     routes: [route],
@@ -154,6 +156,28 @@ function renderPlanBody(args: {
     '## Files referenced',
     args.manifestPaths.length === 0 ? '_(none)_' : args.manifestPaths.slice(0, 20).map((p) => `- ${p}`).join('\n'),
   ].join('\n');
+}
+
+/**
+ * Pull out the planner's explicitly-flagged open questions - lines marked
+ * `OPEN:` (optionally as a list item or bold). These are decisions the plan
+ * couldn't resolve on its own; the UI highlights them so the user confirms
+ * before execution. De-duplicated, trailing markdown emphasis stripped.
+ */
+export function extractOpenQuestions(text: string): string[] {
+  const re = /^\s*(?:[-*]\s*)?(?:\*\*|__)?\s*OPEN\s*(?:\*\*|__)?\s*:\s*(.+?)\s*$/gim;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null = re.exec(text);
+  while (m !== null) {
+    const q = (m[1] ?? '').replace(/\*\*|__/g, '').trim();
+    if (q && !seen.has(q)) {
+      seen.add(q);
+      out.push(q);
+    }
+    m = re.exec(text);
+  }
+  return out;
 }
 
 function extractPhases(text: string): import('./planFile.js').PlanPhase[] {

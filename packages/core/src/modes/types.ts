@@ -179,6 +179,13 @@ export type ModeOutput = {
   text?: string;
   /** Plan file when relevant. */
   planFile?: PlanFile;
+  /**
+   * Open questions the planner flagged (lines it marked `OPEN:`). Surfaced
+   * separately from the plan body so the UI can highlight them and prompt
+   * the user to confirm before execution. Empty/undefined when the plan had
+   * no open decisions.
+   */
+  openQuestions?: string[];
   /** Resolved diff for the run, if any. */
   diff?: string;
   filesChanged?: string[];

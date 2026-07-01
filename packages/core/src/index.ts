@@ -138,6 +138,7 @@ export {
 export type { ProjectEntry, ChatSession, ChatMessageRecord } from './store/index.js';
 export { loadConfig } from './config/index.js';
 export { runMode } from './modes/dispatch.js';
+export { savePlanFile, loadPlanFile, renderPlanFile } from './modes/planFile.js';
 export {
   buildBrief,
   renderBriefAsPrompt,

@@ -27,6 +27,7 @@ export function buildReport(prompt: string, out: ModeOutput): Report {
     citations: out.citations,
     text: out.text,
     escalationHint: (out as { escalationHint?: string }).escalationHint,
+    openQuestions: out.openQuestions,
     securityFindings: out.securityFindings,
     applied: out.applied,
     applyError: out.applyError,

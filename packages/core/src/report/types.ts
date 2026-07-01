@@ -36,6 +36,17 @@ export type Report = {
   citations?: Citation[];
   /** Optional escalation nudge (Plan -> Masterplan). */
   escalationHint?: string;
+  /**
+   * Open questions the planner flagged (`OPEN:` lines). Surfaced as a
+   * highlighted callout so the user confirms them before executing the plan.
+   */
+  openQuestions?: string[];
+  /**
+   * Filesystem path the plan was written to
+   * (`<repo>/.coderouter/plans/<id>.plan.md`), when the run produced a plan
+   * file. Lets the UI point the user at the saved, editable plan.
+   */
+  planPath?: string;
   /** Optional human-readable text artifact (plan markdown / debug tree). */
   text?: string;
   /**
