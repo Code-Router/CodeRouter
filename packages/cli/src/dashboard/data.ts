@@ -27,7 +27,7 @@ import {
   registerProject,
   resolveDbPath,
 } from '@coderouter/core';
-import type { InstalledPlugin, Plugin, ResolvedPlugin, Rule, Skill, Subagent } from '@coderouter/core';
+import type { InstalledPlugin, Plugin, ResolvedPlugin, Rule, RunMode, Skill, Subagent } from '@coderouter/core';
 import type { RunRecord } from '@coderouter/core/store';
 import {
   CREDENTIALS_PATH,
@@ -35,6 +35,7 @@ import {
   SETUP_PROVIDERS,
   getAutoApply,
   getPreferredModels,
+  getRunMode,
   getSpendingLimit,
   type SetupProvider,
 } from '../ui/setup.js';
@@ -154,6 +155,8 @@ export type SettingsReport = {
   limits: { monthlyUsd: number | null };
   /** Whether agent/chat file changes are applied automatically (vs. reviewed). */
   autoApply: boolean;
+  /** How the agent executes commands + edits. */
+  runMode: RunMode;
   preferredModels: {
     strong: { provider: string; model: string } | null;
     cheap: { provider: string; model: string } | null;
@@ -444,6 +447,7 @@ export function buildSettingsReport(cwd: string): SettingsReport {
     hosts,
     limits: getSpendingLimit(),
     autoApply: getAutoApply(),
+    runMode: getRunMode(),
     preferredModels: getPreferredModels(),
     availableModels: listAvailableModels(),
     paths: { credentials: CREDENTIALS_PATH, db: resolveDbPath(cwd) },

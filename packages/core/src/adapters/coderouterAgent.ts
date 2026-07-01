@@ -119,6 +119,7 @@ export class CodeRouterAgentAdapter extends BaseAdapter {
       transport,
       priorMessages: input.priorMessages,
       images: input.images,
+      runMode: input.runMode,
       reasoningEffort: input.reasoningEffort,
       onChunk: input.onChunk,
       onReasoning: input.onActivity

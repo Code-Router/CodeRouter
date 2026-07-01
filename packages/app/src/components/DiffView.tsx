@@ -73,6 +73,7 @@ export function DiffView({
   const [reverting, setReverting] = useState(false);
   const [reverted, setReverted] = useState(false);
   const [discarded, setDiscarded] = useState(false);
+  const [kept, setKept] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const files = useMemo(() => (diff ? parseDiff(diff) : []), [diff]);
   const fileCount = files.length || filesChanged?.length || 0;
@@ -145,23 +146,39 @@ export function DiffView({
         )}
         <div className="ml-auto flex items-center gap-2">
           {isApplied ? (
-            <>
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-ok">
-                <Check className="h-3.5 w-3.5" />
-                {applied ? 'Applied' : 'Accepted'}
+            kept ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-muted">
+                <Check className="h-3.5 w-3.5 text-ok" />
+                Kept
               </span>
-              {onRevert && (
+            ) : (
+              <>
+                <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-ok" title="These changes are already written to your files">
+                  <Check className="h-3.5 w-3.5" />
+                  In your files
+                </span>
+                {onRevert && (
+                  <button
+                    onClick={() => void revert()}
+                    disabled={reverting}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-bad/50 hover:text-bad disabled:opacity-60"
+                    title="Revert these changes from your files"
+                  >
+                    {reverting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+                    {reverting ? 'Undoing…' : 'Undo'}
+                  </button>
+                )}
                 <button
-                  onClick={() => void revert()}
+                  onClick={() => setKept(true)}
                   disabled={reverting}
-                  className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-bad/50 hover:text-bad disabled:opacity-60"
-                  title="Revert these changes from your files"
+                  className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-accent/80 disabled:opacity-60"
+                  title="Keep these changes and dismiss the review"
                 >
-                  {reverting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
-                  {reverting ? 'Undoing…' : 'Undo'}
+                  <Check className="h-3.5 w-3.5" />
+                  Keep
                 </button>
-              )}
-            </>
+              </>
+            )
           ) : (
             <>
               {reverted && <span className="text-xs font-medium text-muted">Reverted</span>}

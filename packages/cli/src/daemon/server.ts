@@ -5,10 +5,10 @@ import { readdir } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isAbsolute, join as joinPath, relative as relativePath, resolve as resolvePath } from 'node:path';
-import type { ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode } from '@coderouter/core';
+import type { ActivityEvent, ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode } from '@coderouter/core';
 import { PRESETS, discoverVerifiers, generateLoopSpec, openStore, resolveDbPath, sandbox, validateLoopSpec } from '@coderouter/core';
 import { CLI_VERSION } from '../version.js';
-import { getAutoApply } from '../ui/setup.js';
+import { getAutoApply, getRunMode } from '../ui/setup.js';
 import { handle as handleDashboard, readJson, sendJson } from '../dashboard/server.js';
 import { buildExecutionEnv, executeRun } from '../runtime.js';
 import { buildAllLoops, buildChatDetail, buildChatsReport, buildProjectsReport } from './data.js';
@@ -122,7 +122,10 @@ export async function startDaemon(opts: { cwd: string; port?: number } = { cwd: 
   const port = await listen(server, opts.port ?? DEFAULT_DAEMON_PORT);
   writeDaemonInfo({ port, pid: process.pid, startedAt: Date.now(), version: CLI_VERSION });
 
-  const cleanup = (): void => clearDaemonInfo();
+  const cleanup = (): void => {
+    clearDaemonInfo();
+    killAllBackgroundProcesses();
+  };
   process.on('exit', cleanup);
   process.on('SIGINT', () => {
     cleanup();
@@ -141,6 +144,7 @@ export async function startDaemon(opts: { cwd: string; port?: number } = { cwd: 
         for (const c of sseClients) c.end();
         sseClients.clear();
         clearDaemonInfo();
+        killAllBackgroundProcesses();
         server.closeAllConnections?.();
         server.close(() => resolve());
       }),
@@ -265,6 +269,25 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
     return handleFiles(res, project, url.searchParams.get('dir') ?? '');
   }
 
+  // GET /api/processes?cwd= -> list background processes the agent
+  // started for a project that are still alive.
+  if (method === 'GET' && path === '/api/processes') {
+    const project = url.searchParams.get('cwd') ?? cwd;
+    return sendJson(res, 200, { processes: listProcesses(project) });
+  }
+
+  // POST /api/processes/stop -> kill a tracked background process.
+  if (method === 'POST' && path === '/api/processes/stop') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handleProcessStop(req, res);
+  }
+
+  // POST /api/preview -> open a (local) URL in the user's default browser.
+  if (method === 'POST' && path === '/api/preview') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handlePreview(req, res);
+  }
+
   // ---- loops ------------------------------------------------------
   if (path === '/api/loops' || path.startsWith('/api/loops/')) {
     const handled = await handleLoops(req, res, cwd, method, path, url);
@@ -277,6 +300,144 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
 
 const VALID_MODES = new Set<Mode>(['plan', 'masterplan', 'agent', 'debug', 'review', 'orchestrate']);
 const VALID_EFFORTS = new Set<Effort>(['low', 'medium', 'high', 'max']);
+
+// ---- background process registry --------------------------------
+//
+// The agent can start long-running processes (dev servers) via
+// `bash(background:true)`. Those emit a `process_started` activity event;
+// we record them here (keyed by pid) so the app can list them per project,
+// open their URL in a browser, and stop them. The processes themselves are
+// spawned detached inside the core layer, so they outlive the run - this
+// registry is just metadata + a kill switch.
+type ProcRecord = {
+  pid: number;
+  command: string;
+  cwd: string;
+  url?: string;
+  sessionId: string;
+  startedAt: number;
+};
+const backgroundProcesses = new Map<number, ProcRecord>();
+
+function registerProcess(
+  sessionId: string,
+  cwd: string,
+  ev: Extract<ActivityEvent, { kind: 'process_started' }>,
+): void {
+  if (!ev.pid || ev.pid <= 0) return;
+  backgroundProcesses.set(ev.pid, {
+    pid: ev.pid,
+    command: ev.command,
+    cwd: ev.cwd || cwd,
+    url: ev.url,
+    sessionId,
+    startedAt: Date.now(),
+  });
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Live processes for a project, pruning any that have since exited. */
+function listProcesses(project: string): ProcRecord[] {
+  const root = resolvePath(project);
+  const out: ProcRecord[] = [];
+  for (const [pid, rec] of backgroundProcesses) {
+    if (!isAlive(pid)) {
+      backgroundProcesses.delete(pid);
+      continue;
+    }
+    if (resolvePath(rec.cwd) === root) out.push(rec);
+  }
+  return out.sort((a, b) => a.startedAt - b.startedAt);
+}
+
+function killProcess(pid: number): boolean {
+  try {
+    // execBackground spawned detached, so target the whole process group.
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      process.kill(pid, 'SIGTERM');
+    }
+    setTimeout(() => {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }, 2_000);
+  } catch {
+    backgroundProcesses.delete(pid);
+    return false;
+  }
+  backgroundProcesses.delete(pid);
+  return true;
+}
+
+/** Kill every tracked background process. Called on daemon shutdown. */
+function killAllBackgroundProcesses(): void {
+  for (const pid of backgroundProcesses.keys()) {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
+  backgroundProcesses.clear();
+}
+
+async function handleProcessStop(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req);
+  const pid = typeof body.pid === 'number' ? body.pid : Number(body.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return sendJson(res, 400, { error: 'valid pid required' });
+  const ok = killProcess(pid);
+  return sendJson(res, ok ? 200 : 422, { ok });
+}
+
+async function handlePreview(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req);
+  const raw = String(body.url ?? '').trim();
+  if (!/^https?:\/\//i.test(raw)) return sendJson(res, 400, { error: 'valid http(s) url required' });
+  try {
+    const opened = await openUrl(raw);
+    return sendJson(
+      res,
+      opened ? 200 : 422,
+      opened ? { ok: true, url: raw } : { ok: false, error: 'no opener found' },
+    );
+  } catch (e) {
+    return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+/** Open a URL in the OS default browser (loopback-only convenience). */
+function openUrl(target: string): Promise<boolean> {
+  const trySpawn = (cmd: string, args: string[]): Promise<boolean> =>
+    new Promise((resolve) => {
+      try {
+        const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+        child.on('error', () => resolve(false));
+        child.unref();
+        setTimeout(() => resolve(true), 100);
+      } catch {
+        resolve(false);
+      }
+    });
+  if (process.platform === 'darwin') return trySpawn('open', [target]);
+  if (process.platform === 'win32') return trySpawn('cmd', ['/c', 'start', '', target]);
+  return trySpawn('xdg-open', [target]);
+}
 
 /**
  * Run a single chat turn and stream the answer. We open an SSE-style
@@ -325,6 +486,7 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
     // global auto-apply preference. When false, the run keeps its edits
     // as a reviewable diff the user accepts later via /api/changes/apply.
     const apply = typeof body.apply === 'boolean' ? body.apply : getAutoApply();
+    const runMode = getRunMode();
 
     const { output } = await executeRun({
       cwd: project,
@@ -333,8 +495,12 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
       effort,
       sessionId,
       apply,
+      runMode,
       onChunk: (text) => send({ type: 'chunk', text }),
-      onActivity: (event) => send({ type: 'activity', event }),
+      onActivity: (event) => {
+        send({ type: 'activity', event });
+        if (event.kind === 'process_started') registerProcess(sessionId, project, event);
+      },
       onUsage: (usage) => send({ type: 'usage', ...usage }),
       priorMessages: prior,
     });

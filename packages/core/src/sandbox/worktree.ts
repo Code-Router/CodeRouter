@@ -339,6 +339,63 @@ export async function changedFiles(wt: Worktree): Promise<string[]> {
     .filter((line) => line.length > 0);
 }
 
+/**
+ * Snapshot the current working tree (tracked + non-ignored untracked files)
+ * as a git tree object WITHOUT touching the repo's real index. Uses a
+ * throwaway index file so `git add -A` + `git write-tree` capture the exact
+ * on-disk state without staging anything for the user. Returns the tree sha.
+ *
+ * Powers in-place (unsandboxed/allowlist) diffing: snapshot before the run,
+ * snapshot after, then diff the two trees with `diffWorkingTree`.
+ */
+export async function snapshotWorkingTree(repoPath: string): Promise<string> {
+  const tmpIndex = join(tmpdir(), `cr-index-${randomUUID()}`);
+  try {
+    const add = await git(['add', '-A'], { cwd: repoPath, env: { GIT_INDEX_FILE: tmpIndex } });
+    if (add.exitCode !== 0) {
+      throw new CommandError(
+        `snapshotWorkingTree: git add failed: ${add.stderr.trim()}`,
+        add,
+        'git',
+        ['add', '-A'],
+      );
+    }
+    const tree = await gitOrThrow(['write-tree'], {
+      cwd: repoPath,
+      env: { GIT_INDEX_FILE: tmpIndex },
+    });
+    return tree.stdout.trim();
+  } finally {
+    await rm(tmpIndex, { force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Diff the current working tree against a previously-captured tree sha
+ * (see `snapshotWorkingTree`). Returns the unified patch + changed-file
+ * list, filtering the same build-artifact noise as `diffWorktree`. Used for
+ * in-place runs where there's no worktree - the edits are already on the
+ * user's real files, and we just need to describe what changed so the UI can
+ * render + optionally undo them.
+ */
+export async function diffWorkingTree(
+  repoPath: string,
+  baseTree: string,
+): Promise<{ diff: string; files: string[] }> {
+  const afterTree = await snapshotWorkingTree(repoPath);
+  const patch = await git(['diff', '--patch', baseTree, afterTree, '--', '.', ...DIFF_EXCLUDES], {
+    cwd: repoPath,
+  });
+  const names = await git(['diff', '--name-only', baseTree, afterTree, '--', '.', ...DIFF_EXCLUDES], {
+    cwd: repoPath,
+  });
+  const files = names.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return { diff: patch.exitCode === 0 ? patch.stdout : '', files };
+}
+
 /** Returns short metrics for the worktree diff (used by report layer). */
 export async function diffStats(wt: Worktree): Promise<WorktreeMetrics> {
   await git(['add', '-N', '.'], { cwd: wt.path });

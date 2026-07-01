@@ -28,7 +28,7 @@ export * as loops from './loops/index.js';
 // Mirrors what the CLI, MCP server, and eval harness import.
 export * from './types.js';
 export type { ProviderConfig, ProviderModelConfig } from './providers/types.js';
-export type { ModeInput, ModeOutput, ModeContext, WorktreeHandle } from './modes/types.js';
+export type { ModeInput, ModeOutput, ModeContext, WorktreeHandle, RunMode } from './modes/types.js';
 export type { ChatMessage, ContentBlock } from './agent/transport/types.js';
 export { ConversationHistory } from './agent/history.js';
 export { detectPromptImages, imageToDataUrl, imageMimeFromPath, imageBasename } from './context/images.js';

@@ -65,6 +65,21 @@ export type ActivityEvent =
    */
   | { kind: 'tool_result'; tool: string; ok: boolean; body?: string; toolUseId?: string }
   /**
+   * A long-running / background process the agent started (e.g. a dev
+   * server via `bash(background:true)`). Unlike a normal tool_use, the
+   * process outlives the tool call, so the UI surfaces it as a running
+   * process the user can open in a browser or stop. `url` is a detected
+   * local server address (e.g. `http://localhost:5173`) when known.
+   */
+  | {
+      kind: 'process_started';
+      pid: number;
+      command: string;
+      cwd: string;
+      url?: string;
+      toolUseId?: string;
+    }
+  /**
    * Reasoning / thinking summary. Codex emits these between agent
    * messages; Claude Code rarely surfaces them directly. Optional -
    * the REPL may dim or hide them entirely depending on verbosity.
@@ -86,6 +101,14 @@ export type AdapterCallInput = {
    * sandboxing worktree) and therefore MUST NOT mutate anything.
    */
   readOnly?: boolean;
+  /**
+   * How the agent may run shell commands. Threaded to the first-party
+   * agent's tool context so the `bash` tool can enforce the user's
+   * chosen policy: `allowlist` restricts commands to a safe set;
+   * `unsandboxed` runs anything; `sandboxed` (or unset) runs inside the
+   * worktree with no extra gating. Shell-based adapters ignore it.
+   */
+  runMode?: import('../modes/types.js').RunMode;
   maxTokens?: number;
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
   transformer?: string[];

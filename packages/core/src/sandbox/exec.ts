@@ -145,6 +145,109 @@ export async function exec(
   });
 }
 
+export type BackgroundHandle = {
+  pid: number;
+  /** Combined stdout+stderr captured so far (bounded to `maxBuffer`). */
+  output: () => string;
+  /** Kill the process (SIGTERM, then SIGKILL after a short grace). */
+  kill: () => void;
+  /** Resolves once early output settles or `settleMs` elapses. */
+  settled: Promise<void>;
+};
+
+/**
+ * Spawn a long-running process that OUTLIVES the caller (dev servers,
+ * watchers, etc). Unlike {@link exec}, this does not await the child: it
+ * returns a handle immediately with the pid and a live output buffer. The
+ * child is detached so it isn't torn down when the parent tool call returns.
+ *
+ * `settled` resolves once the process has been quiet for `quietMs` or
+ * `settleMs` has elapsed, whichever comes first - long enough to capture a
+ * dev server's "Local: http://..." banner without blocking on a server that
+ * never exits.
+ */
+export function execBackground(
+  cmd: string,
+  args: string[],
+  opts: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    settleMs?: number;
+    quietMs?: number;
+    maxBuffer?: number;
+  } = {},
+): BackgroundHandle {
+  const child = spawn(cmd, args, {
+    cwd: opts.cwd,
+    env: { ...process.env, ...opts.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+  });
+
+  const maxBuffer = opts.maxBuffer ?? 64 * 1024;
+  let buffer = '';
+  const append = (s: string): void => {
+    buffer += s;
+    if (buffer.length > maxBuffer) buffer = buffer.slice(buffer.length - maxBuffer);
+  };
+  child.stdout?.on('data', (c: Buffer) => append(c.toString('utf8')));
+  child.stderr?.on('data', (c: Buffer) => append(c.toString('utf8')));
+
+  const settleMs = opts.settleMs ?? 2_500;
+  const quietMs = opts.quietMs ?? 700;
+  const settled = new Promise<void>((resolve) => {
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    // Resolve after a period of no output (server booted + printed banner),
+    // capped by an absolute deadline so we never hang on a chatty process.
+    let quietTimer: NodeJS.Timeout = setTimeout(finish, quietMs);
+    const bump = (): void => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(finish, quietMs);
+    };
+    child.stdout?.on('data', bump);
+    child.stderr?.on('data', bump);
+    child.on('error', finish);
+    child.on('exit', finish);
+    setTimeout(finish, settleMs);
+  });
+
+  const kill = (): void => {
+    try {
+      // Negative pid targets the whole detached process group.
+      if (child.pid) process.kill(-child.pid, 'SIGTERM');
+      else child.kill('SIGTERM');
+    } catch {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
+    setTimeout(() => {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }, 2_000);
+  };
+
+  // Let the parent exit independently of this child.
+  child.unref();
+
+  return {
+    pid: child.pid ?? -1,
+    output: () => buffer,
+    kill,
+    settled,
+  };
+}
+
 /**
  * Build a platform-appropriate shell invocation for a command string.
  *

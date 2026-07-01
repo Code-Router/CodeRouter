@@ -14,10 +14,13 @@ import {
   commitWorktreeState,
   createWorktree,
   destroyWorktree,
+  diffWorkingTree,
   diffWorktree,
   ensureGitRepo,
   mergeWorktree,
   persistRunArtifact,
+  snapshotWorkingTree,
+  type Worktree,
 } from '../sandbox/worktree.js';
 import { scanText as scanForInjection } from '../security/injection.js';
 import { detectProject, type ProjectType } from '../validate/detect.js';
@@ -155,17 +158,34 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   //   2. Unset -> create fresh. Bootstrap a git repo if needed
   //      (Claude Code-style "point me at any folder" UX), fork a
   //      worktree off HEAD, mirror the user's pending state in.
+  // In-place execution (allowlist / unsandboxed run modes): the agent runs
+  // directly in the user's real project directory instead of a throwaway
+  // worktree. Edits land on real files immediately, dev servers can persist,
+  // and the diff is computed from a before/after working-tree snapshot.
+  const inPlace = input.runMode === 'unsandboxed' || input.runMode === 'allowlist';
   const reusedWorktree = input.existingWorktree;
-  let wt: import('../sandbox/worktree.js').Worktree;
+  let wt: Worktree | undefined;
+  let runDir: string;
+  let inPlaceBaseTree: string | undefined;
   let repoInitCreated = false;
   let createdThisTurn = false;
-  if (reusedWorktree) {
+  if (inPlace) {
+    const repoInit = await ensureGitRepo(input.cwd, { autoInit: true });
+    repoInitCreated = repoInit.created;
+    runDir = input.cwd;
+    // Snapshot the tree BEFORE the agent touches anything so the post-run
+    // diff is exactly this turn's net change. Best-effort: a failure just
+    // means we fall back to diffing against HEAD later.
+    inPlaceBaseTree = await snapshotWorkingTree(input.cwd).catch(() => undefined);
+  } else if (reusedWorktree) {
     wt = { ...reusedWorktree };
+    runDir = wt.path;
   } else {
     const repoInit = await ensureGitRepo(input.cwd, { autoInit: true });
     repoInitCreated = repoInit.created;
     wt = await createWorktree({ repoPath: input.cwd, runId, prefix: 'agent' });
     createdThisTurn = true;
+    runDir = wt.path;
   }
   progress({
     phase: 'agent/worktree',
@@ -176,7 +196,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   let manifest = { entries: [], totalTokens: 0, budget: 0, truncated: false } as import('../types.js').ContextManifest;
   if (!input.fast) {
     progress({ phase: 'agent/context', stage: 'start' });
-    manifest = await scanContext({ cwd: wt.path, prompt: input.prompt });
+    manifest = await scanContext({ cwd: runDir, prompt: input.prompt });
     progress({ phase: 'agent/context', stage: 'done' });
   }
 
@@ -232,7 +252,8 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
     res = await adapter.run({
       prompt: input.prompt,
       systemPrompt,
-      cwd: wt.path,
+      cwd: runDir,
+      runMode: input.runMode,
       images: images.length > 0 ? images : undefined,
       reasoningEffort: profile.reasoningEffort,
       contextManifest: manifest,
@@ -264,7 +285,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
     // it this turn AND the caller hasn't asked us to keep it (REPL
     // passes `keepWorktree: true` to preserve cwd / accumulated
     // edits across prompts).
-    if (createdThisTurn && !input.keepWorktree) {
+    if (!inPlace && wt && createdThisTurn && !input.keepWorktree) {
       await destroyWorktree(wt).catch(() => {});
     }
     // Surface cancellation as a structured outcome instead of letting
@@ -276,9 +297,10 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       // that the user already declined to apply. The file content
       // stays on disk (and visible to the agent on the next turn)
       // either way - we're just advancing the diff baseline.
-      const newSha = input.keepWorktree
-        ? await commitWorktreeState(wt, 'coderouter: aborted turn').catch(() => null)
-        : null;
+      const newSha =
+        !inPlace && wt && input.keepWorktree
+          ? await commitWorktreeState(wt, 'coderouter: aborted turn').catch(() => null)
+          : null;
       return {
         mode: 'agent',
         status: 'aborted',
@@ -296,8 +318,9 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
         // Hand the worktree back even on abort so the REPL can
         // reuse it on the next prompt - the user often hits esc to
         // course-correct mid-run, then types a refined prompt.
-        worktree: input.keepWorktree
-          ? {
+        worktree:
+          !inPlace && wt && input.keepWorktree
+            ? {
               runId: wt.runId,
               branch: wt.branch,
               path: wt.path,
@@ -319,8 +342,20 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   // and running `pnpm lint` / `tsc` / `vitest` against an unchanged
   // worktree is at best wasted time and at worst noise that drowns
   // the actual answer.
-  const files = await changedFiles(wt).catch(() => []);
-  const diff = await diffWorktree(wt).catch(() => '');
+  let files: string[];
+  let diff: string;
+  if (inPlace) {
+    // Edits are already on the user's real files; describe them by diffing
+    // the pre-run tree snapshot against the current working tree.
+    const snap = inPlaceBaseTree
+      ? await diffWorkingTree(input.cwd, inPlaceBaseTree).catch(() => ({ diff: '', files: [] as string[] }))
+      : { diff: '', files: [] as string[] };
+    files = snap.files;
+    diff = snap.diff;
+  } else {
+    files = await changedFiles(wt!).catch(() => []);
+    diff = await diffWorktree(wt!).catch(() => '');
+  }
 
   // Validators only matter when the changed files belong to the
   // project's primary toolchain. Three common ways this skip fires:
@@ -338,9 +373,9 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   // burned an LLM call trying to "fix" something the validators
   // can't even evaluate. Skip the whole pipeline cleanly with a
   // structured `skipped` reason instead.
-  const project = await detectProject(wt.path);
+  const project = await detectProject(runDir);
   const hasMatchingChanges = files.some((f) => isProjectSource(f, project.type));
-  const hasInstalledDeps = await hasProjectDeps(wt.path, project.type);
+  const hasInstalledDeps = await hasProjectDeps(runDir, project.type);
   let skipReason: string | null = null;
   if (files.length === 0) skipReason = 'no-file-changes';
   else if (!hasMatchingChanges) skipReason = `no-${project.type}-sources-changed`;
@@ -350,10 +385,12 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   let handoffPasses = 0;
   if (!input.fast && skipReason === null) {
     progress({ phase: 'agent/validate', stage: 'start' });
-    validators = await runValidators({ cwd: wt.path, signal: input.signal });
+    validators = await runValidators({ cwd: runDir, signal: input.signal });
     progress({ phase: 'agent/validate', stage: 'done' });
 
-    if (summarize(validators).status === 'fail' && profile.maxHandoffPasses > 0) {
+    // The handoff fix-pass operates on a worktree; in-place runs have none,
+    // so we report failing validators without an automated fix pass.
+    if (!inPlace && wt && summarize(validators).status === 'fail' && profile.maxHandoffPasses > 0) {
       progress({ phase: 'agent/handoff', stage: 'start' });
       const handoff = await runHandoff({
         registry: ctx.registry,
@@ -398,13 +435,18 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   // exact pattern that produced the "claimed to create the file but
   // it doesn't exist" confusion.
   let artifactDir: string | undefined;
-  if (files.length > 0) {
+  if (!inPlace && wt && files.length > 0) {
     const artifact = await persistRunArtifact(wt, { diff, files });
     if (artifact) artifactDir = artifact.dir;
   }
 
-  // Apply + lifecycle. Three flavors:
+  // Apply + lifecycle.
   //
+  // In-place runs: edits are ALREADY on the user's real files, so there's
+  // nothing to merge - `applied` just reflects whether anything changed
+  // (the UI shows Keep/Undo and Undo reverses the diff).
+  //
+  // Worktree runs, three flavors:
   //   1. `keepWorktree=true`  (REPL session)    -> never destroy.
   //      Optionally merge into host when `apply` is on, then snapshot
   //      the worktree's state into a commit so `baseSha` advances
@@ -417,7 +459,9 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   //      `git apply` it manually later if they want.
   let applied = false;
   let applyError: string | undefined;
-  if (input.apply && files.length > 0) {
+  if (inPlace) {
+    applied = files.length > 0;
+  } else if (input.apply && wt && files.length > 0) {
     try {
       await mergeWorktree(wt, { cleanup: false });
       applied = true;
@@ -430,7 +474,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
       applyError = err instanceof Error ? err.message : String(err);
     }
   }
-  if (!input.keepWorktree) {
+  if (!inPlace && wt && !input.keepWorktree) {
     await destroyWorktree(wt).catch(() => {});
   }
 
@@ -440,7 +484,7 @@ export async function runAgentMode(input: ModeInput, ctx: ModeContext): Promise<
   // changes. Without this, every subsequent turn would re-list (and
   // re-merge) the entire session's changes.
   let outgoingWorktree: import('./types.js').WorktreeHandle | undefined;
-  if (input.keepWorktree) {
+  if (!inPlace && wt && input.keepWorktree) {
     const newSha = await commitWorktreeState(wt).catch(() => null);
     outgoingWorktree = {
       runId: wt.runId,

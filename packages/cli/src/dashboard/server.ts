@@ -17,12 +17,13 @@ import {
   setAutoApply,
   setHostEnabled,
   setPreferredModel,
+  setRunMode,
   setSpendingLimit,
   SEARCH_PROVIDERS,
   SETUP_PROVIDERS,
 } from '../ui/setup.js';
 import type { HostProvider } from '../ui/hosts.js';
-import { customize, plugins } from '@coderouter/core';
+import { customize, plugins, type RunMode } from '@coderouter/core';
 import { INDEX_HTML } from './assets.js';
 import {
   buildAssetsReport,
@@ -226,6 +227,14 @@ export async function handle(req: IncomingMessage, res: ServerResponse, cwd: str
         return sendJson(res, 400, { error: 'enabled must be a boolean' });
       setAutoApply(body.enabled);
       return sendJson(res, 200, { ok: true, autoApply: body.enabled });
+    }
+
+    if (path === '/api/settings/run-mode' && method === 'POST') {
+      const valid: RunMode[] = ['sandboxed', 'allowlist', 'unsandboxed'];
+      if (typeof body.runMode !== 'string' || !valid.includes(body.runMode as RunMode))
+        return sendJson(res, 400, { error: "runMode must be 'sandboxed', 'allowlist', or 'unsandboxed'" });
+      setRunMode(body.runMode as RunMode);
+      return sendJson(res, 200, { ok: true, runMode: body.runMode });
     }
 
     if (path === '/api/settings/preferred-model' && method === 'POST') {

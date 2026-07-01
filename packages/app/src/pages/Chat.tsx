@@ -67,6 +67,18 @@ function mergeActivity(list: ActivityItem[], event: ActivityEvent): ActivityItem
       { id: activityIdSeq++, kind: 'tool', tool: event.tool, description: event.description, path: event.path, patch: event.patch },
     ];
   }
+  if (event.kind === 'process_started') {
+    return [
+      ...list,
+      {
+        id: activityIdSeq++,
+        kind: 'tool',
+        tool: 'bash',
+        description: `Started ${event.command}${event.url ? ` — ${event.url}` : ''}`,
+        ok: true,
+      },
+    ];
+  }
   const last = list[list.length - 1];
   if (last && last.kind === 'thinking') {
     const next = list.slice();
@@ -290,6 +302,7 @@ export function ChatPage({
     return (
       <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4">
         <h2 className="mb-6 text-3xl font-semibold tracking-tight">What should we build?</h2>
+        <div className="w-full"><ProcessBar cwd={project} active={busy} /></div>
         <div className="w-full">{composer}</div>
         {error && <div className="mt-3 w-full rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
         <div className="mt-4 w-full divide-y divide-border/60 border-t border-border/60">
@@ -327,9 +340,93 @@ export function ChatPage({
         </div>
       </div>
       <div className="mx-auto w-full max-w-2xl px-6 pb-4">
+        <ProcessBar cwd={project} active={busy} />
         {error && <div className="mb-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
         <div className="pt-1">{composer}</div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shows background processes (dev servers) the agent started for this
+ * project. Polls the daemon so it reflects processes from earlier turns and
+ * prunes ones that have exited. Each row can be opened in the browser or
+ * stopped.
+ */
+function ProcessBar({ cwd, active }: { cwd: string | null; active: boolean }): React.ReactElement | null {
+  const [procs, setProcs] = useState<import('../lib/api').RunningProcess[]>([]);
+  const [stopping, setStopping] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!cwd) {
+      setProcs([]);
+      return;
+    }
+    let alive = true;
+    const load = (): void => {
+      void api
+        .processes(cwd)
+        .then((r) => {
+          if (alive) setProcs(r.processes);
+        })
+        .catch(() => {});
+    };
+    load();
+    // Poll faster while a run is active (a server may spin up mid-turn).
+    const interval = window.setInterval(load, active ? 2000 : 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+    };
+  }, [cwd, active]);
+
+  if (procs.length === 0) return null;
+
+  const stop = async (pid: number): Promise<void> => {
+    setStopping(pid);
+    try {
+      await api.stopProcess(pid);
+      setProcs((p) => p.filter((x) => x.pid !== pid));
+    } finally {
+      setStopping(null);
+    }
+  };
+
+  return (
+    <div className="mb-2 space-y-1.5">
+      {procs.map((p) => (
+        <div key={p.pid} className="flex items-center gap-2 rounded-lg border border-border bg-panel px-2.5 py-1.5 text-xs">
+          <span className="relative flex h-2 w-2 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ok/60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-ok" />
+          </span>
+          <span className="truncate font-mono text-[11px] text-text" title={p.command}>
+            {p.command}
+          </span>
+          {p.url && <span className="truncate font-mono text-[11px] text-muted" title={p.url}>{p.url}</span>}
+          <span className="ml-auto flex shrink-0 items-center gap-2">
+            {p.url && (
+              <button
+                onClick={() => void api.openUrl(p.url as string)}
+                className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 font-medium text-white transition-colors hover:bg-accent/80"
+                title={`Open ${p.url} in your browser`}
+              >
+                Open in browser
+              </button>
+            )}
+            <button
+              onClick={() => void stop(p.pid)}
+              disabled={stopping === p.pid}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 font-medium text-muted transition-colors hover:border-bad/50 hover:text-bad disabled:opacity-60"
+              title="Stop this process"
+            >
+              {stopping === p.pid ? <Loader2 className="h-3 w-3 animate-spin" /> : <Square className="h-3 w-3" />}
+              Stop
+            </button>
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -375,7 +472,7 @@ function MessageRow({
       ) : null}
       {msg.pending && msg.usage && (msg.usage.tokensIn > 0 || msg.usage.tokensOut > 0) && (
         <div className="mt-1 text-[11px] text-muted/70">
-          {msg.usage.tokensIn.toLocaleString()} in · {msg.usage.tokensOut.toLocaleString()} out
+          {msg.usage.tokensIn.toLocaleString()} tokens in · {msg.usage.tokensOut.toLocaleString()} tokens out
           {msg.usage.costUsd ? ` · ${money(msg.usage.costUsd)}` : ''}
         </div>
       )}

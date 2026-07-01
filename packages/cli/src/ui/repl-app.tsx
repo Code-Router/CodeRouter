@@ -658,6 +658,17 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
           routeLabel,
         },
       ];
+    } else if (event.kind === 'process_started') {
+      liveLogRef.current = [
+        ...log,
+        {
+          id: logIdRef.current++,
+          kind: 'tool',
+          tool: 'bash',
+          description: `Started ${event.command}${event.url ? ` — ${event.url}` : ''}`,
+          routeLabel,
+        },
+      ];
     } else {
       // Merge consecutive thinking deltas into one growing entry so
       // streamed reasoning forms a single dim block rather than one

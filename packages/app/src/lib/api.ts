@@ -158,6 +158,7 @@ export const api = {
   setHost: (provider: string, enabled: boolean) => req('POST', '/api/settings/host', { provider, enabled }),
   setLimit: (monthlyUsd: number | null) => req('POST', '/api/settings/limit', { monthlyUsd }),
   setAutoApply: (enabled: boolean) => req<{ ok: boolean; autoApply: boolean }>('POST', '/api/settings/auto-apply', { enabled }),
+  setRunMode: (runMode: RunMode) => req<{ ok: boolean; runMode: RunMode }>('POST', '/api/settings/run-mode', { runMode }),
   setPreferred: (tier: string, provider: string | null, model: string | null) =>
     req('POST', '/api/settings/preferred-model', { tier, provider, model }),
 
@@ -174,9 +175,17 @@ export const api = {
       'GET',
       `/api/files?cwd=${encodeURIComponent(cwd)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
     ),
+  // list background processes (dev servers) the agent started for a project
+  processes: (cwd: string) =>
+    req<{ processes: RunningProcess[] }>('GET', `/api/processes?cwd=${encodeURIComponent(cwd)}`),
+  // stop a background process by pid
+  stopProcess: (pid: number) => req<{ ok: boolean }>('POST', '/api/processes/stop', { pid }),
+  // open a local URL in the user's default browser
+  openUrl: (url: string) => req<{ ok: boolean; url?: string; error?: string }>('POST', '/api/preview', { url }),
 };
 
 export type FileEntry = { name: string; type: 'dir' | 'file'; path: string };
+export type RunningProcess = { pid: number; command: string; cwd: string; url?: string; sessionId: string; startedAt: number };
 
 export type ChatStreamEvent =
   | { type: 'start'; sessionId: string }
@@ -371,10 +380,12 @@ export type SettingsReport = {
   hosts: HostSetting[];
   limits: { monthlyUsd: number | null };
   autoApply: boolean;
+  runMode: RunMode;
   preferredModels: { strong: { provider: string; model: string } | null; cheap: { provider: string; model: string } | null };
   availableModels: AvailableModel[];
   paths: { credentials: string; db: string };
 };
+export type RunMode = 'sandboxed' | 'allowlist' | 'unsandboxed';
 export type RuleAsset = { id: string; scope: string; path: string; description: string; globs: string[]; alwaysApply: boolean; body: string };
 export type SkillAsset = { slug: string; scope: string; path: string; name: string; description: string; body: string };
 export type SubagentAsset = {

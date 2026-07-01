@@ -126,6 +126,11 @@ export type CliRunOpts = {
    * mode -> adapter -> agent loop.
    */
   priorMessages?: import('@coderouter/core').ChatMessage[];
+  /**
+   * How commands/edits execute. Threaded straight into `ModeInput.runMode`.
+   * When unset the mode defaults to `sandboxed` (isolated worktree).
+   */
+  runMode?: import('@coderouter/core').RunMode;
 };
 
 /**
@@ -207,6 +212,7 @@ export async function executeRun(opts: CliRunOpts): Promise<{
         existingWorktree: opts.existingWorktree,
         keepWorktree: opts.keepWorktree,
         priorMessages: opts.priorMessages,
+        runMode: opts.runMode,
       },
       {
         registry,

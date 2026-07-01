@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { api, type SettingsReport } from '../lib/api';
+import { api, type RunMode, type SettingsReport } from '../lib/api';
 import { Section, Spinner, cls } from '../components/common';
 import { useTheme, type ThemePref } from '../lib/theme';
 
@@ -122,6 +122,10 @@ export function SettingsPage(): React.ReactElement {
         <AutoApply enabled={data.autoApply} onChange={(v) => api.setAutoApply(v).then(refresh)} />
       </Section>
 
+      <Section title="Run mode">
+        <RunModeSetting mode={data.runMode} onChange={(v) => api.setRunMode(v).then(refresh)} />
+      </Section>
+
       <Section title="Spending limit">
         <SpendingLimit current={data.limits.monthlyUsd} onSave={(v) => api.setLimit(v).then(refresh)} />
       </Section>
@@ -202,6 +206,58 @@ function AutoApply({ enabled, onChange }: { enabled: boolean; onChange: (v: bool
           )}
         />
       </button>
+    </div>
+  );
+}
+
+const RUN_MODE_OPTIONS: Array<{ id: RunMode; label: string; blurb: string }> = [
+  {
+    id: 'unsandboxed',
+    label: 'Run everything',
+    blurb: 'Edits and commands run in-place in your project. Full terminal, dev servers, and browser preview. No command restrictions.',
+  },
+  {
+    id: 'allowlist',
+    label: 'Allowlist',
+    blurb: 'Runs in-place, but only allowlisted commands (build/test/run/package managers) execute. Dev servers and preview still work.',
+  },
+  {
+    id: 'sandboxed',
+    label: 'Sandboxed',
+    blurb: 'Each run works inside an isolated temporary copy of your project. Safest, but cannot run a live server you can open.',
+  },
+];
+
+function RunModeSetting({ mode, onChange }: { mode: RunMode; onChange: (v: RunMode) => Promise<unknown> }): React.ReactElement {
+  const [saving, setSaving] = useState<RunMode | null>(null);
+  const active = RUN_MODE_OPTIONS.find((o) => o.id === mode) ?? RUN_MODE_OPTIONS[0];
+  const select = async (next: RunMode): Promise<void> => {
+    if (next === mode) return;
+    setSaving(next);
+    try {
+      await onChange(next);
+    } finally {
+      setSaving(null);
+    }
+  };
+  return (
+    <div className="card space-y-3">
+      <div className="inline-flex overflow-hidden rounded-md border border-border">
+        {RUN_MODE_OPTIONS.map((o) => (
+          <button
+            key={o.id}
+            disabled={saving !== null}
+            onClick={() => void select(o.id)}
+            className={cls(
+              'px-3 py-1.5 text-sm transition-colors disabled:opacity-60',
+              mode === o.id ? 'bg-accent/20 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <div className="text-xs text-muted">{active.blurb}</div>
     </div>
   );
 }

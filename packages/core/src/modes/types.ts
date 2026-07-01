@@ -18,11 +18,28 @@ import type {
 import type { ProgressNotifier } from './progress.js';
 import type { PlanFile } from './planFile.js';
 
+/**
+ * How the agent executes shell commands and edits:
+ *   - `sandboxed`   : run inside a throwaway `/tmp` git worktree (isolated,
+ *                     clean diff, no real-file risk). Legacy default.
+ *   - `allowlist`   : run in-place in the real project dir, but only
+ *                     allowlisted command prefixes are permitted.
+ *   - `unsandboxed` : run in-place in the real project dir with no command
+ *                     restrictions (Cursor-style). Default.
+ */
+export type RunMode = 'sandboxed' | 'allowlist' | 'unsandboxed';
+
 export type ModeInput = {
   prompt: string;
   cwd: string;
   effort?: Effort;
   sessionId?: string;
+  /**
+   * How commands/edits execute this run. When absent the mode defaults to
+   * `sandboxed` for backwards compatibility (one-shot CLI runs); the daemon
+   * and REPL pass the user's global preference explicitly.
+   */
+  runMode?: RunMode;
   /** Validators to run. Falls back to project-detected defaults. */
   validatorsCommand?: string[];
   /** When set, mode runs the dryRun decision flow (no agent invocation). */

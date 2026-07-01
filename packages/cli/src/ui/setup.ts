@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { RunMode } from '@coderouter/core';
 import {
   HOST_DISABLE_ENV,
   detectHosts,
@@ -62,6 +63,12 @@ type CredentialsFile = {
    * explicitly from the desktop app. Stored globally like other prefs.
    */
   autoApply?: boolean;
+  /**
+   * How the agent executes commands and edits. Stored globally like other
+   * prefs. See `RunMode`. Defaults to `unsandboxed` (Cursor-style: edits and
+   * commands run in-place in the real project directory).
+   */
+  runMode?: RunMode;
   /**
    * User's preferred models per tier. When set, routing leans on these
    * instead of the catalog default: `strong` is used for high-effort
@@ -241,15 +248,16 @@ export function getSpendingLimit(): { monthlyUsd: number | null } {
 
 /**
  * Whether agent/chat file changes are applied automatically. Defaults to
- * `false` (manual accept) so nothing touches the working tree without the
- * user opting in.
+ * `true` (Cursor-style): edits are written straight to the working tree and
+ * can be undone afterwards. Users can opt into review-first mode by turning
+ * the auto-accept setting off.
  */
 export function getAutoApply(): boolean {
   try {
     const file = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
-    return file.autoApply === true;
+    return file.autoApply !== false;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -262,6 +270,41 @@ export function setAutoApply(enabled: boolean): void {
     // file doesn't exist or is malformed - rewrite from scratch
   }
   existing.autoApply = enabled === true;
+  mkdirSync(dirname(CREDENTIALS_PATH), { recursive: true });
+  writeFileSync(CREDENTIALS_PATH, `${JSON.stringify(existing, null, 2)}\n`, { encoding: 'utf8' });
+  try {
+    chmodSync(CREDENTIALS_PATH, 0o600);
+  } catch {
+    // permissions are best-effort (e.g. on Windows)
+  }
+}
+
+const RUN_MODES: readonly RunMode[] = ['sandboxed', 'allowlist', 'unsandboxed'];
+
+/**
+ * How the agent runs commands + edits. Defaults to `unsandboxed`
+ * (Cursor-style: in-place in the real project dir). A malformed/absent
+ * value falls back to the default.
+ */
+export function getRunMode(): RunMode {
+  try {
+    const file = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+    return file.runMode && RUN_MODES.includes(file.runMode) ? file.runMode : 'unsandboxed';
+  } catch {
+    return 'unsandboxed';
+  }
+}
+
+/** Persist the run-mode preference. */
+export function setRunMode(mode: RunMode): void {
+  const next = RUN_MODES.includes(mode) ? mode : 'unsandboxed';
+  let existing: CredentialsFile = {};
+  try {
+    existing = JSON.parse(readFileSync(CREDENTIALS_PATH, 'utf8')) as CredentialsFile;
+  } catch {
+    // file doesn't exist or is malformed - rewrite from scratch
+  }
+  existing.runMode = next;
   mkdirSync(dirname(CREDENTIALS_PATH), { recursive: true });
   writeFileSync(CREDENTIALS_PATH, `${JSON.stringify(existing, null, 2)}\n`, { encoding: 'utf8' });
   try {

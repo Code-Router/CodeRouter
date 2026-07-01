@@ -44,6 +44,19 @@ export type ToolContext = {
    * REPL the same way Claude Code's `AskUserQuestion` does.
    */
   onUserQuestion?: (payload: AskUserQuestionPayload) => void;
+  /**
+   * How the agent may run shell commands. The `bash` tool consults this
+   * to gate commands under `allowlist` mode. Unset / `sandboxed` /
+   * `unsandboxed` impose no per-command gating.
+   */
+  runMode?: import('../modes/types.js').RunMode;
+  /**
+   * Structured-action sink, forwarded from the run. Lets tools surface
+   * events beyond their return value - e.g. `bash` emitting a
+   * `process_started` event for a backgrounded dev server so the UI can
+   * track and preview it.
+   */
+  onActivity?: (event: ActivityEvent) => void;
 };
 
 export type ToolResult = {
@@ -116,6 +129,12 @@ export type AgentRunInput = {
 
   /** Prior conversation messages to prepend (after system, before this turn's user prompt). */
   priorMessages?: ChatMessage[];
+
+  /**
+   * How the agent may run shell commands (forwarded into each tool's
+   * context). Gates the `bash` tool under `allowlist` mode.
+   */
+  runMode?: import('../modes/types.js').RunMode;
 
   /** Absolute paths to image files to include in the user message as vision content. */
   images?: string[];

@@ -241,6 +241,8 @@ async function executeToolCalls(opts: {
       const result = await tool.run(parsedArgs, {
         cwd: input.cwd,
         signal: input.signal,
+        runMode: input.runMode,
+        onActivity: input.onActivity,
         onUserQuestion: input.onUserQuestion
           ? (payload) => {
               askedQuestion = true;
