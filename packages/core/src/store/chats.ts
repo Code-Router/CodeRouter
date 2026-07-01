@@ -124,6 +124,18 @@ export class ChatStore {
       .all(sessionId) as MessageRow[];
     return rows.map(rowToMessage);
   }
+
+  /**
+   * Permanently remove a chat session and all of its messages. Returns
+   * true when a session was actually deleted. Runs linked to the session
+   * are left intact (usage history stays accurate); only the browsable
+   * conversation is dropped.
+   */
+  deleteSession(id: string): boolean {
+    this.db.prepare('DELETE FROM chat_messages WHERE session_id = ?').run(id);
+    const res = this.db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id);
+    return Number(res.changes ?? 0) > 0;
+  }
 }
 
 function rowToSession(row: SessionRow): ChatSession {

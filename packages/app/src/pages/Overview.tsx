@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, type SettingsReport, type UsageReport } from '../lib/api';
 import { Heatmap } from '../components/Heatmap';
 import { Section, Spinner, money } from '../components/common';
+import { ModelBadges } from '../components/ModelBadges';
 import { DEFAULT_LIMIT_USD, SpendingProgress } from './Spending';
 
 export function OverviewPage(): React.ReactElement {
@@ -50,14 +51,25 @@ export function OverviewPage(): React.ReactElement {
       </Section>
 
       <Section title="Recent">
-        <div className="card divide-y divide-border p-0">
-          {data.recentRuns.slice(0, 8).map((r) => (
-            <div key={r.id} className="flex items-center gap-3 px-3 py-2 text-sm">
-              <span className="w-16 shrink-0 text-xs text-muted">{r.mode}</span>
-              <span className="min-w-0 flex-1 truncate">{r.prompt}</span>
-              <span className="shrink-0 text-xs text-muted">{money(r.costUsd)}</span>
-            </div>
-          ))}
+        <div className="card p-0">
+          <div className="flex items-center gap-3 border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted">
+            <span className="w-16 shrink-0">Mode</span>
+            <span className="min-w-0 flex-1">Prompt</span>
+            <span className="w-64 shrink-0">Models</span>
+            <span className="w-14 shrink-0 text-right">Cost</span>
+          </div>
+          <div className="divide-y divide-border">
+            {data.recentRuns.slice(0, 8).map((r) => (
+              <div key={r.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="w-16 shrink-0 truncate text-xs text-muted">{r.mode}</span>
+                <span className="min-w-0 flex-1 truncate" title={r.prompt}>{r.prompt}</span>
+                <span className="w-64 shrink-0">
+                  <ModelBadges routes={r.routes?.length ? r.routes : r.route ? [r.route] : []} max={2} />
+                </span>
+                <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted">{money(r.costUsd)}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </Section>
     </div>

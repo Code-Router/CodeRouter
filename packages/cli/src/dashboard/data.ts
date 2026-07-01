@@ -78,7 +78,15 @@ export type RecentRun = {
   mode: string;
   status: string;
   taskType: string | null;
+  /** Primary route (`provider,model`), kept for back-compat/sorting. */
   route: string;
+  /**
+   * Every distinct model the run touched, in order of first use, as
+   * `provider,model` labels. A single task often fans out across several
+   * models (classifier judge, main agent, escalated fixer), so the UI
+   * renders the whole set rather than just the primary route.
+   */
+  routes: string[];
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
@@ -659,10 +667,12 @@ function topKey(m: Map<string, number>): string | null {
 }
 
 function toRecentRun(r: RunRecord): RecentRun {
-  const primary = r.routes[0];
-  const route = primary
-    ? `${primary.via ?? primary.provider}${primary.model ? `,${primary.model}` : ''}`
-    : '—';
+  const labels: string[] = [];
+  for (const ref of r.routes ?? []) {
+    const label = `${ref.via ?? ref.provider}${ref.model ? `,${ref.model}` : ''}`;
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  const route = labels[0] ?? '—';
   return {
     id: r.id,
     createdAt: r.createdAt,
@@ -670,6 +680,7 @@ function toRecentRun(r: RunRecord): RecentRun {
     status: r.status,
     taskType: r.taskType,
     route,
+    routes: labels,
     tokensIn: r.tokensIn,
     tokensOut: r.tokensOut,
     costUsd: r.costUsd,

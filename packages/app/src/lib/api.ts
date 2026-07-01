@@ -1,4 +1,5 @@
 import type {
+  ActivityEvent,
   ChatMessageRecord,
   ChatSession,
   LoopEvent,
@@ -7,6 +8,8 @@ import type {
   LoopSpec,
   LoopValidation,
 } from '@coderouter/core';
+
+export type { ActivityEvent };
 
 /**
  * Daemon client. Resolves the loopback daemon URL (from the Electron
@@ -79,6 +82,11 @@ export const api = {
   chat: (cwd: string, id: string) =>
     req<{ session: ChatSession; messages: ChatMessageDetail[] }>(
       'GET',
+      `/api/chat?cwd=${encodeURIComponent(cwd)}&id=${encodeURIComponent(id)}`,
+    ),
+  deleteChat: (cwd: string, id: string) =>
+    req<{ ok: boolean; removed: boolean }>(
+      'DELETE',
       `/api/chat?cwd=${encodeURIComponent(cwd)}&id=${encodeURIComponent(id)}`,
     ),
 
@@ -155,11 +163,26 @@ export const api = {
 
   // accept a reviewed diff into the project working tree
   applyChanges: (cwd: string, diff: string) => req<{ ok: boolean; error?: string }>('POST', '/api/changes/apply', { cwd, diff }),
+  // reverse a previously-applied diff (the "Undo" action)
+  revertChanges: (cwd: string, diff: string) => req<{ ok: boolean; error?: string }>('POST', '/api/changes/revert', { cwd, diff }),
+  // open a file (or reveal it in its folder) in the user's editor/IDE
+  openPath: (cwd: string, path: string, reveal = false) =>
+    req<{ ok: boolean; path?: string; error?: string }>('POST', '/api/open', { cwd, path, reveal }),
+  // list one directory's entries for the file explorer (lazy, per-level)
+  files: (cwd: string, dir = '') =>
+    req<{ root: string; dir: string; entries: FileEntry[] }>(
+      'GET',
+      `/api/files?cwd=${encodeURIComponent(cwd)}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`,
+    ),
 };
+
+export type FileEntry = { name: string; type: 'dir' | 'file'; path: string };
 
 export type ChatStreamEvent =
   | { type: 'start'; sessionId: string }
   | { type: 'chunk'; text: string }
+  | { type: 'activity'; event: ActivityEvent }
+  | { type: 'usage'; tokensIn: number; tokensOut: number; costUsd: number }
   | {
       type: 'done';
       sessionId: string;
@@ -302,6 +325,7 @@ export type RecentRun = {
   mode: string;
   status: string;
   route: string;
+  routes: string[];
   costUsd: number;
   durationMs: number;
   prompt: string;

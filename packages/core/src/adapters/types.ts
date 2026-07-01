@@ -35,6 +35,20 @@ export type ActivityEvent =
       tool: string;
       description: string;
       toolUseId?: string;
+      /**
+       * For file-editing tools (edit/write/multi-edit), the worktree-
+       * relative path being changed. Lets the UI render a dedicated
+       * per-file change card instead of a generic tool row.
+       */
+      path?: string;
+      /**
+       * A lightweight preview of the change as `+`/`-` prefixed lines
+       * (not a real git diff — the authoritative diff is computed from
+       * the worktree at end of run). Surfaced at tool-use time so the
+       * UI can stream "what's changing" live, Cursor-style. Omitted by
+       * adapters that don't have the edit content (e.g. Codex).
+       */
+      patch?: string;
       raw?: unknown;
     }
   /**

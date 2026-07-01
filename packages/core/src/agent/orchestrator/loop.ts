@@ -21,6 +21,7 @@
  */
 
 import type { ChatMessage, ContentBlock, ToolCall } from '../transport/types.js';
+import { buildEditPreview } from '../../adapters/editPreview.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../systemPrompt.js';
 import type { AgentRunInput, AgentRunResult, AgentUsage, Tool } from '../types.js';
 import { checkBudget, resolveBudget } from './budget.js';
@@ -213,7 +214,15 @@ async function executeToolCalls(opts: {
     }
 
     const description = tool ? safeDescribe(tool, parsedArgs) : tc.function.name;
-    input.onActivity?.({ kind: 'tool_use', tool: tc.function.name, description, toolUseId });
+    const preview = buildEditPreview(tc.function.name, parsedArgs);
+    input.onActivity?.({
+      kind: 'tool_use',
+      tool: tc.function.name,
+      description,
+      toolUseId,
+      path: preview.path,
+      patch: preview.patch,
+    });
 
     if (!tool) {
       const errBody = `unknown tool '${tc.function.name}'`;

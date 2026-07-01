@@ -1,6 +1,7 @@
 import type { AdapterCapabilities, ProviderId } from '../types.js';
 import { exec } from '../sandbox/exec.js';
 import { BaseAdapter } from './base.js';
+import { buildEditPreview } from './editPreview.js';
 import type {
   ActivityEvent,
   AdapterCallInput,
@@ -450,11 +451,14 @@ class ClaudeJsonStream {
       if (block.type === 'tool_use' && block.name) {
         const toolUseId = block.id;
         if (toolUseId) this.toolNames.set(toolUseId, block.name);
+        const preview = buildEditPreview(block.name, block.input ?? {});
         this.opts.onActivity?.({
           kind: 'tool_use',
           tool: block.name,
           description: describeClaudeToolUse(block.name, block.input ?? {}),
           toolUseId,
+          path: preview.path,
+          patch: preview.patch,
         });
         // The model invoked the built-in interactive-question tool.
         // Headless `claude -p` can't deliver the answer back, so we

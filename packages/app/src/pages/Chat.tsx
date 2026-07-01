@@ -1,12 +1,32 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Check, Copy, Folder, ListTodo, Mic, Paperclip, Plus, Square, Target } from 'lucide-react';
-import { api, sendChat, type ProjectSummary } from '../lib/api';
+import { ArrowUp, Check, Copy, FileDiff, Folder, ListTodo, Loader2, Mic, Paperclip, Plus, Square, Target, X } from 'lucide-react';
+import { api, sendChat, type ActivityEvent, type ProjectSummary } from '../lib/api';
 import { Spinner, cls, money } from '../components/common';
 import { Markdown } from '../components/Markdown';
 import { DiffView } from '../components/DiffView';
 import { Dropdown } from '../components/Dropdown';
 
 export type ChatChanges = { diff: string | null; filesChanged: string[]; cwd: string | null; applied?: boolean };
+
+/**
+ * One row in the live "what the agent is doing" feed. Mirrors the CLI
+ * REPL's log: a `tool` entry (a tool_use, later resolved by its
+ * tool_result) or a `thinking` reasoning summary.
+ */
+type ActivityItem =
+  | { id: number; kind: 'thinking'; text: string }
+  | {
+      id: number;
+      kind: 'tool';
+      tool: string;
+      description: string;
+      ok?: boolean;
+      body?: string;
+      /** Set for file-editing tools → rendered as a per-file change card. */
+      path?: string;
+      /** Live `+`/`-` preview of the edit, streamed in at tool-use time. */
+      patch?: string;
+    };
 
 type Msg = {
   role: 'user' | 'assistant' | 'system';
@@ -17,7 +37,47 @@ type Msg = {
   diff?: string | null;
   filesChanged?: string[];
   applied?: boolean;
+  activity?: ActivityItem[];
+  usage?: { tokensIn: number; tokensOut: number; costUsd: number };
 };
+
+let activityIdSeq = 0;
+
+/**
+ * Fold an incoming activity event into an existing feed, mirroring the
+ * CLI's `appendLogActivity`: `tool_use` pushes a fresh row; `tool_result`
+ * resolves the most recent matching unresolved tool row; `thinking`
+ * deltas merge into one growing dim block.
+ */
+function mergeActivity(list: ActivityItem[], event: ActivityEvent): ActivityItem[] {
+  if (event.kind === 'tool_result') {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const row = list[i];
+      if (row.kind === 'tool' && row.tool === event.tool && row.ok === undefined) {
+        const next = list.slice();
+        next[i] = { ...row, ok: event.ok, body: event.body };
+        return next;
+      }
+    }
+    return [...list, { id: activityIdSeq++, kind: 'tool', tool: event.tool, description: event.tool, ok: event.ok, body: event.body }];
+  }
+  if (event.kind === 'tool_use') {
+    return [
+      ...list,
+      { id: activityIdSeq++, kind: 'tool', tool: event.tool, description: event.description, path: event.path, patch: event.patch },
+    ];
+  }
+  const last = list[list.length - 1];
+  if (last && last.kind === 'thinking') {
+    const next = list.slice();
+    next[next.length - 1] = { ...last, text: last.text + event.text };
+    return next;
+  }
+  return [...list, { id: activityIdSeq++, kind: 'thinking', text: event.text }];
+}
+
+/** Max composer height (px) before it stops growing and scrolls. */
+const MAX_COMPOSER_PX = 240;
 
 const EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 const MODES = ['agent', 'plan', 'masterplan', 'debug', 'review'] as const;
@@ -43,6 +103,7 @@ export function ChatPage({
   chatId,
   project,
   projects,
+  insertText,
   onProjectChange,
   onAddFolder,
   onSessionCreated,
@@ -51,6 +112,8 @@ export function ChatPage({
   chatId: string | null;
   project: string | null;
   projects: ProjectSummary[];
+  /** Text to append to the composer (e.g. an @file mention); re-applied whenever `nonce` changes. */
+  insertText?: { text: string; nonce: number } | null;
   onProjectChange: (cwd: string) => void;
   onAddFolder?: () => void;
   onSessionCreated: (id: string) => void;
@@ -99,6 +162,17 @@ export function ChatPage({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
+  // Append an @file mention (or other text) from the file explorer to
+  // the composer whenever a new insert request arrives.
+  useEffect(() => {
+    if (!insertText) return;
+    setInput((v) => {
+      const sep = v && !v.endsWith(' ') ? ' ' : '';
+      return `${v}${sep}${insertText.text} `;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insertText?.nonce]);
+
   // Report the most recent assistant changes upward so the Changes side
   // panel can mirror them.
   useEffect(() => {
@@ -132,6 +206,20 @@ export function ChatPage({
               const next = [...m];
               const last = next[next.length - 1];
               if (last && last.role === 'assistant') last.text += e.text;
+              return next;
+            });
+          } else if (e.type === 'activity') {
+            setMessages((m) => {
+              const next = [...m];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') last.activity = mergeActivity(last.activity ?? [], e.event);
+              return next;
+            });
+          } else if (e.type === 'usage') {
+            setMessages((m) => {
+              const next = [...m];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') last.usage = { tokensIn: e.tokensIn, tokensOut: e.tokensOut, costUsd: e.costUsd };
               return next;
             });
           } else if (e.type === 'done') {
@@ -220,20 +308,45 @@ export function ChatPage({
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-2xl flex-col">
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto px-1 pb-6 pt-2">
-        {loadingHistory && <Spinner />}
-        {messages.map((m, i) => (
-          <MessageRow key={i} msg={m} onAccept={project ? (diff) => api.applyChanges(project, diff) : undefined} />
-        ))}
+    <div className="flex h-full flex-col">
+      {/* Full-width scroll container so the scrollbar rides the right edge;
+          the conversation itself stays centered at a readable width. */}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-2xl space-y-6 px-6 pb-6 pt-6">
+          {loadingHistory && <Spinner />}
+          {messages.map((m, i) => (
+            <MessageRow
+              key={i}
+              msg={m}
+              cwd={project}
+              onAccept={project ? (diff) => api.applyChanges(project, diff) : undefined}
+              onRevert={project ? (diff) => api.revertChanges(project, diff) : undefined}
+              onOpenFile={project ? (path) => api.openPath(project, path) : undefined}
+            />
+          ))}
+        </div>
       </div>
-      {error && <div className="mb-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
-      <div className="pt-3">{composer}</div>
+      <div className="mx-auto w-full max-w-2xl px-6 pb-4">
+        {error && <div className="mb-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
+        <div className="pt-1">{composer}</div>
+      </div>
     </div>
   );
 }
 
-function MessageRow({ msg, onAccept }: { msg: Msg; onAccept?: (diff: string) => Promise<unknown> }): React.ReactElement {
+function MessageRow({
+  msg,
+  cwd,
+  onAccept,
+  onRevert,
+  onOpenFile,
+}: {
+  msg: Msg;
+  cwd?: string | null;
+  onAccept?: (diff: string) => Promise<unknown>;
+  onRevert?: (diff: string) => Promise<unknown>;
+  onOpenFile?: (path: string) => void;
+}): React.ReactElement {
   const [copied, setCopied] = useState(false);
   const copy = (): void => {
     void navigator.clipboard.writeText(msg.text);
@@ -248,16 +361,34 @@ function MessageRow({ msg, onAccept }: { msg: Msg; onAccept?: (diff: string) => 
       </div>
     );
   }
+  const hasActivity = (msg.activity?.length ?? 0) > 0;
   return (
     <div className="group">
-      {msg.text ? <Markdown text={msg.text} /> : msg.pending ? <span className="text-sm text-muted">Thinking…</span> : null}
+      {hasActivity && <ActivityFeed items={msg.activity as ActivityItem[]} live={Boolean(msg.pending)} />}
+      {msg.text ? (
+        <Markdown text={msg.text} />
+      ) : msg.pending && !hasActivity ? (
+        <span className="inline-flex items-center gap-2 text-sm text-muted">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Thinking…
+        </span>
+      ) : null}
+      {msg.pending && msg.usage && (msg.usage.tokensIn > 0 || msg.usage.tokensOut > 0) && (
+        <div className="mt-1 text-[11px] text-muted/70">
+          {msg.usage.tokensIn.toLocaleString()} in · {msg.usage.tokensOut.toLocaleString()} out
+          {msg.usage.costUsd ? ` · ${money(msg.usage.costUsd)}` : ''}
+        </div>
+      )}
       {!msg.pending && (msg.diff || msg.filesChanged?.length) ? (
         <div className="mt-2">
           <DiffView
             diff={msg.diff}
             filesChanged={msg.filesChanged}
+            cwd={cwd}
             applied={msg.applied}
             onAccept={msg.diff && onAccept ? () => onAccept(msg.diff as string).then(() => undefined) : undefined}
+            onRevert={msg.diff && onRevert ? () => onRevert(msg.diff as string).then(() => undefined) : undefined}
+            onOpenFile={onOpenFile}
           />
         </div>
       ) : null}
@@ -271,6 +402,119 @@ function MessageRow({ msg, onAccept }: { msg: Msg; onAccept?: (diff: string) => 
           {msg.costUsd ? <span>{money(msg.costUsd)}</span> : null}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Live "actions" feed shown under a streaming assistant reply — the app
+ * mirror of the CLI REPL's log. Each tool call renders with a status
+ * glyph (spinner while running, check/✗ once resolved) and an optional
+ * captured-output body; thinking summaries render as dim italic lines.
+ */
+function ActivityFeed({ items, live }: { items: ActivityItem[]; live: boolean }): React.ReactElement {
+  return (
+    <div className="mb-2 space-y-1.5">
+      {items.map((it) => {
+        if (it.kind === 'thinking') {
+          return (
+            <div key={it.id} className="whitespace-pre-wrap text-xs italic leading-relaxed text-muted">
+              {it.text}
+            </div>
+          );
+        }
+        // File-editing tools render as a Cursor-style per-file change
+        // card; everything else is a compact one-line tool row.
+        if (it.path || it.patch) return <FileEditCard key={it.id} item={it} live={live} />;
+        return <ToolRow key={it.id} item={it} live={live} />;
+      })}
+    </div>
+  );
+}
+
+/**
+ * Per-file change card shown live during a run: a header with the file
+ * path and a status glyph (spinner while the edit is in flight, ✓/✗ once
+ * resolved), plus a streamed `+`/`-` preview of what's changing. The
+ * authoritative diff still appears in the DiffView once the run finishes.
+ */
+function FileEditCard({ item, live }: { item: Extract<ActivityItem, { kind: 'tool' }>; live: boolean }): React.ReactElement {
+  const pending = item.ok === undefined;
+  const lines = item.patch ? item.patch.split('\n') : [];
+  const add = lines.filter((l) => l.startsWith('+')).length;
+  const del = lines.filter((l) => l.startsWith('-')).length;
+  const path = item.path || item.description.replace(/^(Edited|Wrote|Editing)\s+/i, '');
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-panel">
+      <div className="flex items-center gap-2 border-b border-border/70 px-2.5 py-1.5 text-xs">
+        {pending ? (
+          <Loader2 className={cls('h-3.5 w-3.5 shrink-0 text-accent', live && 'animate-spin')} />
+        ) : item.ok ? (
+          <Check className="h-3.5 w-3.5 shrink-0 text-ok" />
+        ) : (
+          <X className="h-3.5 w-3.5 shrink-0 text-bad" />
+        )}
+        <FileDiff className="h-3.5 w-3.5 shrink-0 text-muted" />
+        <span className="truncate font-mono text-[12px] text-text" title={path}>{path}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-2">
+          {(add > 0 || del > 0) && (
+            <span className="font-mono text-[11px]">
+              <span className="text-ok">+{add}</span> <span className="text-bad">−{del}</span>
+            </span>
+          )}
+          {pending && <span className="text-[11px] text-muted">{live ? 'editing…' : 'queued'}</span>}
+        </span>
+      </div>
+      {lines.length > 0 && (
+        <pre className="max-h-56 overflow-auto bg-bg/40 px-2.5 py-1.5 text-[11px] leading-[1.5]">
+          <code>
+            {lines.map((line, i) => (
+              <div
+                key={i}
+                className={cls(
+                  'whitespace-pre',
+                  line.startsWith('+') && 'bg-ok/10 text-ok',
+                  line.startsWith('-') && 'bg-bad/10 text-bad',
+                  line.startsWith('@@') && 'text-accent',
+                  line.startsWith('…') && 'text-muted italic',
+                  !line.startsWith('+') && !line.startsWith('-') && !line.startsWith('@@') && !line.startsWith('…') && 'text-muted',
+                )}
+              >
+                {line || ' '}
+              </div>
+            ))}
+          </code>
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function ToolRow({ item, live }: { item: Extract<ActivityItem, { kind: 'tool' }>; live: boolean }): React.ReactElement {
+  const pending = item.ok === undefined;
+  return (
+    <div className="text-xs">
+      <div className="flex items-center gap-1.5">
+        {pending ? (
+          live ? (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted" />
+          ) : (
+            <span className="h-3 w-3 shrink-0 text-center text-muted">›</span>
+          )
+        ) : item.ok ? (
+          <Check className="h-3 w-3 shrink-0 text-ok" />
+        ) : (
+          <X className="h-3 w-3 shrink-0 text-bad" />
+        )}
+        <span className="font-medium text-muted">{item.tool}</span>
+        <span className="truncate text-muted/80">{item.description !== item.tool ? item.description : ''}</span>
+      </div>
+      {item.body ? (
+        <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border/60 bg-bg/40 px-2 py-1 text-[11px] leading-[1.5] text-muted">
+          {item.body.split('\n').slice(0, 12).join('\n')}
+          {item.body.split('\n').length > 12 ? `\n…and ${item.body.split('\n').length - 12} more lines` : ''}
+        </pre>
+      ) : null}
     </div>
   );
 }
@@ -309,21 +553,34 @@ function Composer({
   placeholder: string;
 }): React.ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const { supported: voiceSupported, listening, toggle: toggleVoice } = useVoiceInput((t) =>
     setInput(input ? `${input} ${t}` : t),
   );
+
+  // Auto-grow the composer to fit its content, capped at MAX_COMPOSER_PX
+  // (then it scrolls). Reset to `auto` first so it can also shrink when
+  // the user deletes lines or the input is cleared after sending.
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_PX)}px`;
+  }, [input]);
 
   const append = (text: string): void => setInput(input ? `${input}${text}` : text);
 
   return (
     <div className="rounded-2xl border border-border bg-panel shadow-sm transition-colors focus-within:border-accent/60">
       <textarea
-        className="max-h-60 min-h-[72px] w-full resize-none bg-transparent px-4 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-muted"
+        ref={taRef}
+        className="min-h-[72px] w-full resize-none overflow-y-auto bg-transparent px-4 pt-3.5 text-[15px] leading-relaxed outline-none placeholder:text-muted"
+        style={{ maxHeight: MAX_COMPOSER_PX }}
         placeholder={placeholder}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKeyDown}
-        rows={3}
+        rows={1}
       />
       <div className="flex items-center gap-2 px-3 pb-3 pt-1">
         <div className="relative">

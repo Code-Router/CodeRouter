@@ -431,11 +431,15 @@ class CodexJsonStream {
 
     if (eventType === 'item.started' && !this.startedTools.has(item.id)) {
       this.startedTools.add(item.id);
+      // Codex only tells us which paths changed, not the content, so we
+      // surface the path (enabling a per-file change card) without a patch.
+      const path = tool === 'Edit' ? collectFilePaths(item)[0] : undefined;
       this.opts.onActivity?.({
         kind: 'tool_use',
         tool,
         description: desc,
         toolUseId: item.id,
+        path,
       });
       return;
     }

@@ -444,6 +444,28 @@ export async function applyPatchToRepo(repoPath: string, patch: string): Promise
 }
 
 /**
+ * Reverse a unified diff previously applied by {@link applyPatchToRepo},
+ * restoring the working tree to its pre-patch state. Powers the "Undo"
+ * action in Studio: the same diff text is re-applied with `--reverse`.
+ * Mirrors the plain→3way fallback so an undo still succeeds when the
+ * files have drifted slightly. Throws a readable message on failure.
+ */
+export async function revertPatchFromRepo(repoPath: string, patch: string): Promise<void> {
+  if (!patch.trim()) return;
+  const apply = await exec('git', ['apply', '--reverse', '-'], { cwd: repoPath, input: patch });
+  if (apply.exitCode === 0) return;
+  const apply3 = await exec('git', ['apply', '--reverse', '--3way', '-'], { cwd: repoPath, input: patch });
+  if (apply3.exitCode !== 0) {
+    throw new CommandError(
+      `revertPatchFromRepo: git apply --reverse failed: ${apply3.stderr.trim() || apply.stderr.trim()}`,
+      apply3,
+      'git',
+      ['apply', '--reverse'],
+    );
+  }
+}
+
+/**
  * Snapshots the worktree's current state into a new commit on its
  * branch and returns the resulting sha. Used by long-lived REPL
  * sessions to advance `baseSha` after each turn so that subsequent

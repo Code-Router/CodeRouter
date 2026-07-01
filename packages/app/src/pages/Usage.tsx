@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, type Breakdown, type UsageReport } from '../lib/api';
 import { Heatmap } from '../components/Heatmap';
 import { Section, Spinner, money, timeAgo } from '../components/common';
+import { ModelBadges } from '../components/ModelBadges';
 
 export function UsagePage(): React.ReactElement {
   const [data, setData] = useState<UsageReport | null>(null);
@@ -40,7 +41,7 @@ export function UsagePage(): React.ReactElement {
           <div className="flex items-center gap-3 border-b border-border px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted">
             <span className="w-16 shrink-0">Mode</span>
             <span className="min-w-0 flex-1">Prompt</span>
-            <span className="hidden w-48 shrink-0 lg:block">Route</span>
+            <span className="hidden w-64 shrink-0 lg:block">Models</span>
             <span className="w-16 shrink-0 text-right">Cost</span>
             <span className="w-16 shrink-0 text-right">When</span>
           </div>
@@ -49,8 +50,8 @@ export function UsagePage(): React.ReactElement {
               <div key={r.id} className="flex items-center gap-3 px-3 py-2">
                 <span className="w-16 shrink-0 truncate text-xs text-muted">{r.mode}</span>
                 <span className="min-w-0 flex-1 truncate" title={r.prompt}>{r.prompt}</span>
-                <span className="hidden w-48 shrink-0 text-xs text-muted lg:flex">
-                  <RouteLabel value={r.route} />
+                <span className="hidden w-64 shrink-0 lg:flex">
+                  <ModelBadges routes={r.routes?.length ? r.routes : r.route ? [r.route] : []} max={3} />
                 </span>
                 <span className="w-16 shrink-0 text-right text-xs tabular-nums">{money(r.costUsd)}</span>
                 <span className="w-16 shrink-0 text-right text-xs text-muted">{timeAgo(r.createdAt)}</span>

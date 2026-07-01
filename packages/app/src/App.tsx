@@ -6,6 +6,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  FolderTree,
   LayoutDashboard,
   type LucideIcon,
   Monitor,
@@ -18,6 +19,7 @@ import {
   Sparkles,
   SquarePen,
   Sun,
+  Trash2,
 } from 'lucide-react';
 import { api, execCommand, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
 import { LoopEventsProvider, useDaemonConnected } from './lib/events';
@@ -26,6 +28,7 @@ import { cls } from './components/common';
 import { Logo } from './components/Logo';
 import { Terminal } from './components/Terminal';
 import { ChangesPanel } from './components/ChangesPanel';
+import { FileTree } from './components/FileTree';
 import { LoopsPage } from './pages/Loops';
 import { ChatPage, type ChatChanges } from './pages/Chat';
 import { OverviewArea } from './pages/OverviewArea';
@@ -70,6 +73,8 @@ function Shell(): React.ReactElement {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [insertText, setInsertText] = useState<{ text: string; nonce: number } | null>(null);
   const [changes, setChanges] = useState<ChatChanges | null>(null);
   const connected = useDaemonConnected();
   const mac = isMac();
@@ -184,6 +189,28 @@ function Shell(): React.ReactElement {
     setChatId(c.id);
     setNav('chat');
   };
+  // File-explorer actions: reference a file in the prompt (@path) or
+  // open it in the user's editor.
+  const mentionFile = (relPath: string): void => {
+    setNav('chat');
+    setInsertText({ text: `@${relPath}`, nonce: Date.now() });
+  };
+  const openFileInEditor = (relPath: string): void => {
+    if (project) void api.openPath(project, relPath);
+  };
+  const deleteChat = async (c: ChatSummary): Promise<void> => {
+    if (!window.confirm(`Delete chat "${c.title || 'Untitled'}"? This can't be undone.`)) return;
+    // Optimistically drop it from the tree; if the open chat was deleted,
+    // fall back to a fresh new-chat composer.
+    setChats((prev) => prev.filter((x) => x.id !== c.id));
+    if (nav === 'chat' && chatId === c.id) newChat();
+    try {
+      await api.deleteChat(c.cwd, c.id);
+    } catch {
+      // Re-sync from the daemon if the delete failed so the UI is honest.
+      setChatsKey((k) => k + 1);
+    }
+  };
   const toggleProject = (cwd: string): void => {
     setProject(cwd);
     setExpanded((prev) => {
@@ -272,17 +299,28 @@ function Shell(): React.ReactElement {
                   <div className="mb-1 ml-3 border-l border-border pl-2">
                     {pChats.length === 0 && <div className="px-2 py-1 text-xs text-muted/60">No chats yet</div>}
                     {pChats.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => openChat(c)}
-                        title={c.title}
-                        className={cls(
-                          'no-drag flex w-full items-center rounded-md px-2 py-1 text-left text-[13px] transition-colors',
-                          nav === 'chat' && chatId === c.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
-                        )}
-                      >
-                        <span className="truncate">{c.title || 'Untitled'}</span>
-                      </button>
+                      <div key={c.id} className="group/chat relative">
+                        <button
+                          onClick={() => openChat(c)}
+                          title={c.title}
+                          className={cls(
+                            'no-drag flex w-full items-center rounded-md py-1 pl-2 pr-7 text-left text-[13px] transition-colors',
+                            nav === 'chat' && chatId === c.id ? 'bg-panel2 text-text' : 'text-muted hover:bg-panel2 hover:text-text',
+                          )}
+                        >
+                          <span className="truncate">{c.title || 'Untitled'}</span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void deleteChat(c);
+                          }}
+                          title="Delete chat"
+                          className="no-drag absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-muted opacity-0 transition-opacity hover:bg-panel hover:text-bad focus:opacity-100 group-hover/chat:opacity-100"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -326,28 +364,33 @@ function Shell(): React.ReactElement {
             {(nav === 'loops' || nav === 'chat') && activeName && (
               <span className="mr-1 max-w-[180px] truncate text-xs text-muted">{activeName}</span>
             )}
+            <PanelToggle icon={FolderTree} active={filesOpen} onClick={() => setFilesOpen((o) => !o)} title="Toggle file explorer" />
             <PanelToggle icon={PanelRight} active={sidePanelOpen} onClick={() => setSidePanelOpen((o) => !o)} title="Toggle changes panel" />
             <PanelToggle icon={PanelBottom} active={bottomPanelOpen} onClick={() => setBottomPanelOpen((o) => !o)} title="Toggle terminal (⌘J)" />
           </div>
         </header>
         <div className="flex min-h-0 flex-1">
+          {filesOpen && (
+            <aside className="w-64 shrink-0 border-r border-border bg-panel">
+              <FileTree project={project} onMention={mentionFile} onOpenFile={openFileInEditor} />
+            </aside>
+          )}
           <div className={cls('min-h-0 flex-1', nav === 'chat' ? 'overflow-hidden' : 'overflow-y-auto')}>
             {nav === 'chat' ? (
-              <div className="h-full px-12 pt-6 pb-4">
-                <ChatPage
-                  chatId={chatId}
-                  project={project}
-                  projects={allProjects}
-                  onProjectChange={setProject}
-                  onAddFolder={() => void openExistingFolder()}
-                  onChanges={setChanges}
-                  onSessionCreated={(id) => {
-                    setChatId(id);
-                    setChatsKey((k) => k + 1);
-                    if (project) setExpanded((e) => new Set(e).add(project));
-                  }}
-                />
-              </div>
+              <ChatPage
+                chatId={chatId}
+                project={project}
+                projects={allProjects}
+                insertText={insertText}
+                onProjectChange={setProject}
+                onAddFolder={() => void openExistingFolder()}
+                onChanges={setChanges}
+                onSessionCreated={(id) => {
+                  setChatId(id);
+                  setChatsKey((k) => k + 1);
+                  if (project) setExpanded((e) => new Set(e).add(project));
+                }}
+              />
             ) : (
               // Universal page container: one place controls width + side
               // margins for every section so they stay consistent.

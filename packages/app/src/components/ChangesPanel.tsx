@@ -20,11 +20,18 @@ export function ChangesPanel({ changes }: { changes: ChatChanges | null }): Reac
             filesChanged={changes!.filesChanged}
             defaultOpen
             applied={changes!.applied}
+            cwd={changes!.cwd}
             onAccept={
               changes!.diff && changes!.cwd
                 ? () => api.applyChanges(changes!.cwd as string, changes!.diff as string).then(() => undefined)
                 : undefined
             }
+            onRevert={
+              changes!.diff && changes!.cwd
+                ? () => api.revertChanges(changes!.cwd as string, changes!.diff as string).then(() => undefined)
+                : undefined
+            }
+            onOpenFile={changes!.cwd ? (path) => void api.openPath(changes!.cwd as string, path) : undefined}
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center px-4 text-center text-sm text-muted">

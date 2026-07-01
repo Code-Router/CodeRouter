@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { isAbsolute, join as joinPath, relative as relativePath, resolve as resolvePath } from 'node:path';
 import type { ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode } from '@coderouter/core';
 import { PRESETS, discoverVerifiers, generateLoopSpec, openStore, resolveDbPath, sandbox, validateLoopSpec } from '@coderouter/core';
 import { CLI_VERSION } from '../version.js';
@@ -204,6 +206,21 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
     return sendJson(res, detail ? 200 : 404, detail ?? { error: 'not found' });
   }
 
+  // DELETE /api/chat?cwd=&id= -> permanently remove a chat and its messages.
+  if (method === 'DELETE' && path === '/api/chat') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    const project = url.searchParams.get('cwd');
+    const id = url.searchParams.get('id');
+    if (!project || !id) return sendJson(res, 400, { error: 'cwd and id required' });
+    const store = await openStore(resolveDbPath(project));
+    try {
+      const removed = store.chats.deleteSession(id);
+      return sendJson(res, 200, { ok: true, removed });
+    } finally {
+      store.db.close();
+    }
+  }
+
   // POST /api/chat/send -> run one conversation turn, streaming the
   // model's answer back as SSE-style chunks. Reuses the same agent
   // execution path as the CLI so chats route, persist, and bill identically.
@@ -224,6 +241,28 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
   if (method === 'POST' && path === '/api/changes/apply') {
     if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
     return handleChangesApply(req, res, cwd);
+  }
+
+  // POST /api/changes/revert -> reverse a previously-applied diff (the
+  // "Undo" action), restoring the files to their pre-change state.
+  if (method === 'POST' && path === '/api/changes/revert') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handleChangesRevert(req, res, cwd);
+  }
+
+  // POST /api/open -> open a file (or its containing folder) in the
+  // user's editor/IDE. Local-only convenience for the diff viewer.
+  if (method === 'POST' && path === '/api/open') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handleOpen(req, res, cwd);
+  }
+
+  // GET /api/files?cwd=&dir= -> list one directory's entries (folders
+  // first, then files), for the IDE-style file explorer. Lazy: the UI
+  // requests each directory as the user expands it.
+  if (method === 'GET' && path === '/api/files') {
+    const project = url.searchParams.get('cwd') ?? cwd;
+    return handleFiles(res, project, url.searchParams.get('dir') ?? '');
   }
 
   // ---- loops ------------------------------------------------------
@@ -295,6 +334,8 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
       sessionId,
       apply,
       onChunk: (text) => send({ type: 'chunk', text }),
+      onActivity: (event) => send({ type: 'activity', event }),
+      onUsage: (usage) => send({ type: 'usage', ...usage }),
       priorMessages: prior,
     });
 
@@ -334,6 +375,136 @@ async function handleChangesApply(req: IncomingMessage, res: ServerResponse, dae
   } catch (e) {
     return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
   }
+}
+
+/**
+ * Reverse a previously-applied diff, restoring the working tree. Powers
+ * the "Undo" button beside "Accept": it re-applies the same patch with
+ * `git apply --reverse` so accepted (or auto-applied) edits can be
+ * rolled back from the UI.
+ */
+async function handleChangesRevert(req: IncomingMessage, res: ServerResponse, daemonCwd: string): Promise<void> {
+  const body = await readJson(req);
+  const project = String(body.cwd ?? daemonCwd);
+  const diff = typeof body.diff === 'string' ? body.diff : '';
+  if (!diff.trim()) return sendJson(res, 400, { error: 'diff required' });
+  try {
+    await sandbox.revertPatchFromRepo(project, diff);
+    return sendJson(res, 200, { ok: true });
+  } catch (e) {
+    return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+/**
+ * Open a path in the user's editor. Resolves `path` relative to `cwd`,
+ * then tries known editor CLIs (Cursor, then VS Code) before falling
+ * back to the OS "open in default app" handler. Runs locally on the
+ * same machine as the daemon, so this is safe for a loopback API.
+ */
+async function handleOpen(req: IncomingMessage, res: ServerResponse, daemonCwd: string): Promise<void> {
+  const body = await readJson(req);
+  const base = String(body.cwd ?? daemonCwd);
+  const rel = String(body.path ?? '').trim();
+  if (!rel) return sendJson(res, 400, { error: 'path required' });
+  const target = isAbsolute(rel) ? rel : resolvePath(base, rel);
+  const reveal = body.reveal === true;
+  try {
+    const opened = await openInEditor(target, reveal);
+    return sendJson(res, opened ? 200 : 422, opened ? { ok: true, path: target } : { ok: false, error: 'no opener found' });
+  } catch (e) {
+    return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+/** Directories the file explorer never descends into (noise/huge). */
+const FILE_TREE_IGNORE = new Set([
+  '.git',
+  'node_modules',
+  '.DS_Store',
+  '.turbo',
+  '.next',
+  '.cache',
+  'dist',
+  'build',
+  'coverage',
+  '.vite',
+  '.pnpm-store',
+]);
+
+type FileEntry = { name: string; type: 'dir' | 'file'; path: string };
+
+/**
+ * List a single directory's entries for the file explorer. `dir` is
+ * project-relative; we resolve it, guard against escaping the project
+ * root, skip heavy/ignored folders, and return folders-first sorted
+ * entries. Lazy by design — the UI fetches each level on expand.
+ */
+async function handleFiles(res: ServerResponse, project: string, dir: string): Promise<void> {
+  const root = resolvePath(project);
+  const target = resolvePath(root, dir);
+  // Contain traversal to the project root.
+  if (target !== root && !target.startsWith(root + '/')) {
+    return sendJson(res, 400, { error: 'path escapes project root' });
+  }
+  try {
+    const dirents = await readdir(target, { withFileTypes: true });
+    const entries: FileEntry[] = [];
+    for (const d of dirents) {
+      if (FILE_TREE_IGNORE.has(d.name)) continue;
+      const isDir = d.isDirectory();
+      if (!isDir && !d.isFile()) continue; // skip sockets/symlinks-to-nowhere
+      const abs = joinPath(target, d.name);
+      entries.push({ name: d.name, type: isDir ? 'dir' : 'file', path: relativePath(root, abs) });
+    }
+    entries.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return sendJson(res, 200, { root, dir, entries });
+  } catch (e) {
+    return sendJson(res, 404, { error: e instanceof Error ? e.message : String(e), entries: [] });
+  }
+}
+
+/**
+ * Best-effort "open in IDE": prefer an editor CLI on PATH (Cursor, then
+ * VS Code, then $EDITOR/$VISUAL) so the file lands in the user's IDE,
+ * and fall back to the platform file opener. `reveal` shows the file in
+ * its folder instead of opening it. Resolves true once something starts.
+ */
+function openInEditor(target: string, reveal: boolean): Promise<boolean> {
+  const trySpawn = (cmd: string, args: string[]): Promise<boolean> =>
+    new Promise((resolve) => {
+      try {
+        const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+        child.on('error', () => resolve(false));
+        // If it didn't error almost immediately, assume it launched.
+        setTimeout(() => {
+          child.unref();
+          resolve(true);
+        }, 120);
+      } catch {
+        resolve(false);
+      }
+    });
+
+  const platformOpen = (): Promise<boolean> => {
+    if (reveal && process.platform === 'darwin') return trySpawn('open', ['-R', target]);
+    if (process.platform === 'darwin') return trySpawn('open', [target]);
+    if (process.platform === 'win32') return trySpawn('cmd', ['/c', 'start', '', target]);
+    return trySpawn('xdg-open', [target]);
+  };
+
+  return (async () => {
+    // When revealing in the folder, the OS handler is the reliable path.
+    if (reveal) return platformOpen();
+    const editors = ['cursor', 'code', process.env.VISUAL, process.env.EDITOR].filter(Boolean) as string[];
+    for (const ed of editors) {
+      if (await trySpawn(ed, [target])) return true;
+    }
+    return platformOpen();
+  })();
 }
 
 /**
