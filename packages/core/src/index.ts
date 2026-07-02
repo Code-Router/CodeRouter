@@ -138,7 +138,9 @@ export {
 export type { ProjectEntry, ChatSession, ChatMessageRecord } from './store/index.js';
 export { loadConfig } from './config/index.js';
 export { runMode } from './modes/dispatch.js';
-export { savePlanFile, loadPlanFile, renderPlanFile } from './modes/planFile.js';
+export { savePlanFile, loadPlanFile, renderPlanFile, parsePlanFile, newEmptyPlanFile } from './modes/planFile.js';
+export type { PlanFile, PlanPhase, PlanFrontmatter } from './modes/planFile.js';
+export type { Clarification, ClarificationSignal } from './clarify/types.js';
 export {
   buildBrief,
   renderBriefAsPrompt,

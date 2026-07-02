@@ -24,6 +24,7 @@ import { runDualPlan } from '../workflows/dualPlan.js';
 import { runTournament } from '../workflows/tournament.js';
 import type { Adapter } from '../adapters/types.js';
 import type { Citation, RouteRef } from '../types.js';
+import { extractOpenQuestions, extractPhases } from './plan.js';
 import { newEmptyPlanFile, type PlanFile } from './planFile.js';
 import { noopProgress } from './progress.js';
 import type { ModeContext, ModeInput, ModeOutput } from './types.js';
@@ -131,13 +132,13 @@ export async function runMasterplanMode(
       synthesisCost = dual.totalCostUsd;
       synthesisRoute = [strong[0]!, strong[1]!];
     } else {
-      const single = await singlePlan(synthesizePrompt, classification, ctx, effort, input.cwd);
+      const single = await singlePlan(synthesizePrompt, classification, ctx, effort, input);
       planText = single.text;
       synthesisCost = single.costUsd;
       synthesisRoute = [single.route];
     }
   } else {
-    const single = await singlePlan(synthesizePrompt, classification, ctx, effort, input.cwd);
+    const single = await singlePlan(synthesizePrompt, classification, ctx, effort, input);
     planText = single.text;
     synthesisCost = single.costUsd;
     synthesisRoute = [single.route];
@@ -171,6 +172,10 @@ export async function runMasterplanMode(
   plan.citations = citations;
   plan.frontmatter.status = 'ready';
   plan.frontmatter.estimatedCostUsd = synthesisCost;
+  // Structured phases + open questions so the app/CLI can render a checklist
+  // and a highlighted "confirm before executing" callout (parity with plan mode).
+  plan.frontmatter.phases = extractPhases(planText);
+  const openQuestions = extractOpenQuestions(planText);
   progress({ phase: 'masterplan/phase6', stage: 'done', index: 6, total: 6 });
 
   return {
@@ -180,6 +185,7 @@ export async function runMasterplanMode(
     text: plan.body,
     planFile: plan,
     plan,
+    openQuestions,
     classification,
     contextManifest: manifest,
     routes: synthesisRoute,
@@ -245,7 +251,7 @@ async function singlePlan(
   classification: import('../types.js').Classification,
   ctx: ModeContext,
   effort: import('../types.js').Effort,
-  cwd?: string,
+  input: ModeInput,
 ): Promise<{ text: string; costUsd: number; route: RouteRef }> {
   const route = pick(classification, ctx.router, { effort });
   const adapter: Adapter = ctx.resolveAdapter
@@ -257,8 +263,14 @@ async function singlePlan(
     reasoningEffort: effortProfile(effort).reasoningEffort,
     // Local-CLI adapters require a cwd; readOnly guards the user's
     // real tree since masterplan synthesis must never write.
-    cwd,
+    cwd: input.cwd,
     readOnly: true,
+    signal: input.signal,
+    // Stream synthesis so the app/CLI render the plan as it's written
+    // instead of sitting on "thinking" until phase 6.
+    onChunk: input.onChunk,
+    onActivity: input.onActivity,
+    onUsage: input.onUsage,
   });
   return { text: res.text, costUsd: res.costUsd, route };
 }

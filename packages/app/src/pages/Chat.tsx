@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Check, Copy, FileDiff, Folder, ListTodo, Loader2, Mic, Paperclip, Plus, Square, Target, X } from 'lucide-react';
-import { api, sendChat, type ActivityEvent, type ProjectSummary } from '../lib/api';
+import { ArrowUp, Check, ClipboardList, Copy, FileDiff, Folder, HelpCircle, ListTodo, Loader2, Mic, Paperclip, Plus, Square, Target, X } from 'lucide-react';
+import { api, sendChat, type ActivityEvent, type Clarification, type ProjectSummary } from '../lib/api';
 import { Spinner, cls, money } from '../components/common';
 import { Markdown } from '../components/Markdown';
 import { DiffView } from '../components/DiffView';
 import { Dropdown } from '../components/Dropdown';
 
 export type ChatChanges = { diff: string | null; filesChanged: string[]; cwd: string | null; applied?: boolean };
+
+/** A prompt + mode to pre-fill a fresh chat with (from the Plan workspace / CLI handoff). */
+export type ChatSeed = { prompt: string; mode: string; nonce: number };
 
 /**
  * One row in the live "what the agent is doing" feed. Mirrors the CLI
@@ -39,6 +42,11 @@ type Msg = {
   applied?: boolean;
   activity?: ActivityItem[];
   usage?: { tokensIn: number; tokensOut: number; costUsd: number };
+  // Plan metadata (set for plan/masterplan turns)
+  planId?: string | null;
+  openQuestions?: string[];
+  clarifications?: Clarification[];
+  escalationHint?: string | null;
 };
 
 let activityIdSeq = 0;
@@ -116,20 +124,26 @@ export function ChatPage({
   project,
   projects,
   insertText,
+  seed,
   onProjectChange,
   onAddFolder,
   onSessionCreated,
   onChanges,
+  onViewPlan,
 }: {
   chatId: string | null;
   project: string | null;
   projects: ProjectSummary[];
   /** Text to append to the composer (e.g. an @file mention); re-applied whenever `nonce` changes. */
   insertText?: { text: string; nonce: number } | null;
+  /** Pre-fill a fresh chat with a prompt + mode (Plan workspace / CLI handoff). */
+  seed?: ChatSeed | null;
   onProjectChange: (cwd: string) => void;
   onAddFolder?: () => void;
   onSessionCreated: (id: string) => void;
   onChanges?: (c: ChatChanges | null) => void;
+  /** Open the Plan workspace focused on a plan id (from a plan/masterplan turn). */
+  onViewPlan?: (planId: string) => void;
 }): React.ReactElement {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
@@ -184,6 +198,16 @@ export function ChatPage({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insertText?.nonce]);
+
+  // Pre-fill the composer + switch mode when a plan seed arrives (from the
+  // Plan workspace "Refine"/"Start build" or a CLI handoff). We don't
+  // auto-send so the user can review before spending a run.
+  useEffect(() => {
+    if (!seed) return;
+    setMode(seed.mode);
+    setInput(seed.prompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed?.nonce]);
 
   // Report the most recent assistant changes upward so the Changes side
   // panel can mirror them.
@@ -245,6 +269,10 @@ export function ChatPage({
                 last.diff = e.diff;
                 last.filesChanged = e.filesChanged;
                 last.applied = e.applied;
+                last.planId = e.planId ?? null;
+                last.openQuestions = e.openQuestions ?? [];
+                last.clarifications = e.clarifications ?? [];
+                last.escalationHint = e.escalationHint ?? null;
                 last.pending = false;
               }
               return next;
@@ -335,6 +363,7 @@ export function ChatPage({
               onAccept={project ? (diff) => api.applyChanges(project, diff) : undefined}
               onRevert={project ? (diff) => api.revertChanges(project, diff) : undefined}
               onOpenFile={project ? (path) => api.openPath(project, path) : undefined}
+              onViewPlan={onViewPlan}
             />
           ))}
         </div>
@@ -437,12 +466,14 @@ function MessageRow({
   onAccept,
   onRevert,
   onOpenFile,
+  onViewPlan,
 }: {
   msg: Msg;
   cwd?: string | null;
   onAccept?: (diff: string) => Promise<unknown>;
   onRevert?: (diff: string) => Promise<unknown>;
   onOpenFile?: (path: string) => void;
+  onViewPlan?: (planId: string) => void;
 }): React.ReactElement {
   const [copied, setCopied] = useState(false);
   const copy = (): void => {
@@ -489,6 +520,9 @@ function MessageRow({
           />
         </div>
       ) : null}
+      {!msg.pending && msg.planId ? (
+        <PlanCallout msg={msg} onViewPlan={onViewPlan} />
+      ) : null}
       {!msg.pending && msg.text && (
         <div className="mt-1.5 flex items-center gap-3 text-[11px] text-muted opacity-0 transition-opacity group-hover:opacity-100">
           <button onClick={copy} className="inline-flex items-center gap-1 hover:text-text">
@@ -498,6 +532,54 @@ function MessageRow({
           {msg.route && <span>{msg.route}</span>}
           {msg.costUsd ? <span>{money(msg.costUsd)}</span> : null}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Post-plan callout under a plan/masterplan turn: highlights the planner's
+ * open questions (and any pre-plan clarifications / escalation nudge) and
+ * offers a button to open the saved plan in the Plan workspace.
+ */
+function PlanCallout({ msg, onViewPlan }: { msg: Msg; onViewPlan?: (planId: string) => void }): React.ReactElement {
+  const questions = [
+    ...(msg.openQuestions ?? []),
+    ...((msg.clarifications ?? []).map((c) => c.question)),
+  ];
+  return (
+    <div className="mt-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-sky-500">
+          <ClipboardList className="h-4 w-4" strokeWidth={2} /> Plan ready
+        </div>
+        {msg.planId && onViewPlan && (
+          <button
+            onClick={() => onViewPlan(msg.planId as string)}
+            className="rounded-md bg-sky-500 px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+          >
+            Open in Plan workspace
+          </button>
+        )}
+      </div>
+      {questions.length > 0 && (
+        <div className="mt-2">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-warn">
+            <HelpCircle className="h-3.5 w-3.5" strokeWidth={2} />
+            {questions.length === 1 ? 'Open question' : `${questions.length} open questions`} — confirm before building
+          </div>
+          <ul className="space-y-1 text-sm text-text">
+            {questions.map((q, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="text-warn">?</span>
+                <span>{q}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {msg.escalationHint && (
+        <div className="mt-2 text-xs text-muted">{msg.escalationHint}</div>
       )}
     </div>
   );

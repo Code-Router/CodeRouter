@@ -33,6 +33,7 @@ import { isDirectoryTrusted, trustDirectory } from './trust.js';
 import { activeMention, listWorkspaceFiles, rankFiles } from './fileIndex.js';
 import { buildExecutionEnv, executeRun } from '../runtime.js';
 import { runAppCommand } from '../commands/app.js';
+import { ensureDaemon } from '../daemon/lockfile.js';
 import { generateLoopSpec, validateLoopSpec } from '@coderouter/core';
 import { startDashboardServer, type DashboardServer } from '../dashboard/server.js';
 import { spawn } from 'node:child_process';
@@ -118,6 +119,28 @@ function openBrowser(url: string): void {
   }
 }
 
+/**
+ * Best-effort "open this file in the user's editor". Prefers a GUI editor
+ * (Cursor, then VS Code) so it detaches cleanly instead of fighting Ink
+ * for the terminal like vim/nano would; falls back to the OS default
+ * handler. The path is always printed so the user can open it manually.
+ */
+function openPathDetached(target: string): void {
+  const trySpawn = (cmd: string, args: string[]): void => {
+    try {
+      const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+      child.on('error', () => {});
+      child.unref();
+    } catch {
+      // ignore — caller printed the path
+    }
+  };
+  const platform = process.platform;
+  const opener = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = platform === 'win32' ? ['/c', 'start', '', target] : [target];
+  trySpawn(opener, args);
+}
+
 type HistoryItem =
   | { id: number; kind: 'welcome' }
   | { id: number; kind: 'user'; text: string }
@@ -128,7 +151,18 @@ type HistoryItem =
   | { id: number; kind: 'question'; payload: AskUserQuestionPayload }
   | { id: number; kind: 'open-questions'; questions: string[] };
 
-type WizardStep = 'idle' | 'trust' | 'confirm' | 'pick' | 'key' | 'review';
+type WizardStep = 'idle' | 'trust' | 'confirm' | 'pick' | 'key' | 'review' | 'plan-approve';
+
+/** What to build/refine after a plan run, captured for the approval prompt. */
+type PlanApproveState = { planPath?: string; planId?: string; body: string; mode: string };
+
+const PLAN_APPROVE_OPTIONS = [
+  'build now (auto-apply)',
+  'build, approve edits',
+  'refine in app',
+  'edit plan file',
+  'give feedback',
+];
 
 /**
  * One entry in the unified live log: text spoken by the model and
@@ -178,10 +212,12 @@ const PHASE_LABELS: Record<string, string> = {
   'plan/research': 'researching',
   'plan/draft': 'drafting plan',
   'plan/validate': 'validating plan',
-  'masterplan/research': 'researching (deep)',
-  'masterplan/decompose': 'decomposing',
-  'masterplan/critique': 'self-critique pass',
-  'masterplan/refine': 'refining',
+  'masterplan/phase1': 'scoping (clarify)',
+  'masterplan/phase2': 'gathering internal evidence',
+  'masterplan/phase3': 'researching (deep)',
+  'masterplan/phase4': 'synthesizing plan',
+  'masterplan/phase5': 'self-critique pass',
+  'masterplan/phase6': 'emitting plan',
   'orchestrate/plan': 'decomposing into sub-tasks',
   'orchestrate/subtask': 'executing sub-task',
   'orchestrate/validate': 'validating combined result',
@@ -333,6 +369,10 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
   // and the user hasn't already trusted edits for this session.
   const [reviewRun, setReviewRun] = useState<RecordedRun | null>(null);
   const [reviewChoice, setReviewChoice] = useState<'approve' | 'discard' | 'trust'>('approve');
+  // Post-plan approval prompt (Claude-Code-style): what to do with a plan
+  // once it's produced — build it, refine in the app, edit, or give feedback.
+  const [planApprove, setPlanApprove] = useState<PlanApproveState | null>(null);
+  const [planApproveChoice, setPlanApproveChoice] = useState(0);
   // Currently-routed model + provider, populated by the agent
   // mode's progress notifier the moment the router picks. The REPL
   // stamps every log entry with a short label (e.g. `claude:opus-4`)
@@ -820,7 +860,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     pushSystem(lines.join('\n'), worst);
   }
 
-  async function dispatch(prompt: string, modeOverride?: Mode): Promise<void> {
+  async function dispatch(prompt: string, modeOverride?: Mode, applyOverride?: boolean): Promise<void> {
     const m = modeOverride ?? mode;
     setBusy(true);
     setPhase('preparing');
@@ -847,7 +887,7 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     // conditionally pause for deletions before anything lands in
     // the host repo. The user-facing `/apply` toggle still controls
     // intent; it just no longer drives the underlying merge.
-    const userIntendsAutoApply = apply || sessionTrustEdits;
+    const userIntendsAutoApply = applyOverride ?? (apply || sessionTrustEdits);
     const notifier: ProgressNotifier = (u) => {
       // Friendly label per phase; ignore the `stage` (`start`/`done`)
       // because the animated spinner already conveys "still running"
@@ -1076,6 +1116,17 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       );
       if (footer.trim()) pushReport(footer);
 
+      // Surface any pre-plan clarifications the detector flagged (the
+      // assumptions the planner made), distinct from planner OPEN: lines.
+      if (report.clarifications && report.clarifications.length > 0) {
+        pushSystem(
+          `  clarifications the planner assumed:\n${report.clarifications
+            .map((c) => `    • ${c.question}`)
+            .join('\n')}`,
+          'info',
+        );
+      }
+
       // Highlight the planner's open questions in a bordered callout, then
       // point the user at the saved, editable plan file.
       if (report.openQuestions && report.openQuestions.length > 0) {
@@ -1083,6 +1134,20 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       }
       if (report.planPath) {
         pushSystem(`  plan saved to ${report.planPath}`, 'success');
+      }
+
+      // After a plan/masterplan run, offer the Claude-Code-style approval
+      // prompt: build it, refine in the app, edit, or give feedback.
+      const isPlanRun = report.mode === 'plan' || report.mode === 'masterplan';
+      if (!controller.signal.aborted && isPlanRun && report.status === 'success') {
+        setPlanApprove({
+          planPath: report.planPath,
+          planId: report.planId,
+          body: report.text ?? '',
+          mode: report.mode,
+        });
+        setPlanApproveChoice(0);
+        setWizardStep('plan-approve');
       }
 
       // Decide what to do with the changes:
@@ -1287,6 +1352,61 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
     }
     setReviewRun(null);
     setWizardStep('idle');
+  }
+
+  /**
+   * Act on the post-plan approval prompt. Indexes match
+   * `PLAN_APPROVE_OPTIONS`: build now / build+approve / refine in app /
+   * edit plan file / give feedback.
+   */
+  async function resolvePlanApprove(choice: number): Promise<void> {
+    const pa = planApprove;
+    setPlanApprove(null);
+    setWizardStep('idle');
+    if (!pa) return;
+
+    if (choice === 0 || choice === 1) {
+      const where = pa.planPath ? ` (saved at ${pa.planPath})` : '';
+      const buildPrompt = `Implement the plan we just made${where}. Follow it step by step and make all the changes it describes.`;
+      pushUser(buildPrompt);
+      // choice 0 → auto-apply; choice 1 → keep the review panel so the
+      // user approves edits before they land.
+      void dispatch(buildPrompt, 'agent', choice === 0);
+      return;
+    }
+
+    if (choice === 2) {
+      // Refine in app: push the draft to the daemon and open Studio.
+      try {
+        const daemon = await ensureDaemon({ cwd });
+        const res = await fetch(`http://127.0.0.1:${daemon.port}/api/plans/handoff`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cwd, planId: pa.planId, body: pa.body }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        pushSystem('  pushed plan to the app — opening CodeRouter Studio to refine it', 'success');
+        void runAppCommand({ cwd }).catch(() => {});
+      } catch (err) {
+        pushSystem(`  failed to hand off to app: ${(err as Error).message}`, 'error');
+      }
+      return;
+    }
+
+    if (choice === 3) {
+      if (!pa.planPath) {
+        pushSystem('  no plan file on disk to edit', 'warn');
+        return;
+      }
+      openPathDetached(pa.planPath);
+      pushSystem(`  opening ${pa.planPath}`, 'info');
+      return;
+    }
+
+    // choice 4: give feedback → switch to plan mode; the prior plan is
+    // already in the conversation, so the next message refines it.
+    setMode('plan');
+    pushSystem("  plan mode — type what you'd like to change and I'll refine the plan", 'info');
   }
 
   function startSetupWizard(): void {
@@ -1837,6 +1957,33 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       return;
     }
 
+    // Wizard: post-plan approval prompt. Vertical list; ↑/↓ to move,
+    // 1-5 shortcuts, enter to confirm, esc to dismiss.
+    if (wizardStep === 'plan-approve') {
+      if (key.escape) {
+        setPlanApprove(null);
+        setWizardStep('idle');
+        return;
+      }
+      if (key.upArrow) {
+        setPlanApproveChoice((c) => (c + PLAN_APPROVE_OPTIONS.length - 1) % PLAN_APPROVE_OPTIONS.length);
+        return;
+      }
+      if (key.downArrow || key.tab) {
+        setPlanApproveChoice((c) => (c + 1) % PLAN_APPROVE_OPTIONS.length);
+        return;
+      }
+      if (char && char >= '1' && char <= '5') {
+        void resolvePlanApprove(Number(char) - 1);
+        return;
+      }
+      if (key.return) {
+        void resolvePlanApprove(planApproveChoice);
+        return;
+      }
+      return;
+    }
+
     // Wizard: api key entry (masked)
     if (wizardStep === 'key') {
       if (key.escape) {
@@ -2110,6 +2257,9 @@ function App({ cwd, initialMode }: AppProps): React.ReactElement {
       )}
       {wizardStep === 'review' && reviewRun && (
         <ApprovePromptPanel run={reviewRun} choice={reviewChoice} />
+      )}
+      {wizardStep === 'plan-approve' && planApprove && (
+        <PlanApprovePanel state={planApprove} choice={planApproveChoice} />
       )}
 
       {showSuggestions && !busy && suggestions.length > 0 && (
@@ -2501,6 +2651,40 @@ function ApproveButton({
     );
   }
   return <Text color="gray">{`  ${label}  `}</Text>;
+}
+
+/**
+ * Post-plan approval prompt, Claude-Code style. After a plan/masterplan
+ * run the user chooses what happens next: build it (auto-apply or with a
+ * review pass), refine it in the desktop app, edit the plan file, or give
+ * feedback to refine it in place.
+ */
+function PlanApprovePanel({
+  state,
+  choice,
+}: {
+  state: PlanApproveState;
+  choice: number;
+}): React.ReactElement {
+  return (
+    <Box borderStyle="round" borderColor="cyan" paddingX={2} marginBottom={1} flexDirection="column">
+      <Text bold color="cyan">{`${state.mode === 'masterplan' ? 'masterplan' : 'plan'} ready — what next?`}</Text>
+      <Box marginTop={1} flexDirection="column">
+        {PLAN_APPROVE_OPTIONS.map((label, i) => {
+          const selected = i === choice;
+          return (
+            <Text key={label} color={selected ? 'cyan' : 'gray'} bold={selected}>
+              {selected ? '❯ ' : '  '}
+              {`${i + 1}. ${label}`}
+            </Text>
+          );
+        })}
+      </Box>
+      <Box marginTop={1}>
+        <Text color="gray">↑ ↓ to choose · 1-5 shortcuts · enter to confirm · esc to dismiss</Text>
+      </Box>
+    </Box>
+  );
 }
 
 /**

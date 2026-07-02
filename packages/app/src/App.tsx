@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Blocks,
   ChevronRight,
+  ClipboardList,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -22,7 +23,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, execCommand, isMac, type ChatSummary, type ProjectSummary } from './lib/api';
-import { LoopEventsProvider, useDaemonConnected } from './lib/events';
+import { LoopEventsProvider, useDaemonConnected, usePlanOpen } from './lib/events';
 import { useTheme, type ThemePref } from './lib/theme';
 import { cls } from './components/common';
 import { Logo } from './components/Logo';
@@ -30,18 +31,20 @@ import { Terminal } from './components/Terminal';
 import { ChangesPanel } from './components/ChangesPanel';
 import { FileTree } from './components/FileTree';
 import { LoopsPage } from './pages/Loops';
-import { ChatPage, type ChatChanges } from './pages/Chat';
+import { ChatPage, type ChatChanges, type ChatSeed } from './pages/Chat';
 import { OverviewArea } from './pages/OverviewArea';
+import { PlansPage, type PlanSelection } from './pages/Plans';
 import { PluginsPage } from './pages/Plugins';
 import { SettingsArea } from './pages/SettingsArea';
 
-export type Nav = 'overview' | 'chat' | 'loops' | 'plugins' | 'settings';
+export type Nav = 'overview' | 'chat' | 'plans' | 'loops' | 'plugins' | 'settings';
 
 type TopItem = { id: Nav; label: string; icon: LucideIcon };
 
 const TOP_NAV: TopItem[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'chat', label: 'New chat', icon: SquarePen },
+  { id: 'plans', label: 'Plans', icon: ClipboardList },
   { id: 'loops', label: 'Loops', icon: RefreshCw },
   { id: 'plugins', label: 'Plugins', icon: Blocks },
 ];
@@ -76,8 +79,45 @@ function Shell(): React.ReactElement {
   const [filesOpen, setFilesOpen] = useState(false);
   const [insertText, setInsertText] = useState<{ text: string; nonce: number } | null>(null);
   const [changes, setChanges] = useState<ChatChanges | null>(null);
+  // Plan workspace: which plan to open, and a pending chat seed (prompt +
+  // mode) used to launch refine / build chats from a plan.
+  const [planSelection, setPlanSelection] = useState<PlanSelection>(null);
+  const [chatSeed, setChatSeed] = useState<ChatSeed | null>(null);
   const connected = useDaemonConnected();
   const mac = isMac();
+
+  // Open a fresh chat pre-filled with a prompt + mode (used by the Plan
+  // workspace "Refine"/"Start build" actions and CLI -> app handoffs).
+  const seedChat = (prompt: string, seedMode: string, cwd?: string): void => {
+    if (cwd) setProject(cwd);
+    setChatSeed({ prompt, mode: seedMode, nonce: Date.now() });
+    setChatId('new');
+    setNav('chat');
+  };
+
+  // Chat "View plan": jump to the Plan workspace focused on a plan id.
+  const viewPlan = (planId: string, cwd?: string): void => {
+    if (cwd) setProject(cwd);
+    setPlanSelection({ id: planId, nonce: Date.now() });
+    setNav('plans');
+  };
+
+  // CLI -> app handoff: open a Plan-mode refine chat preloaded with the
+  // pushed plan's body (mirrors Claude Code's "refine with Ultraplan").
+  usePlanOpen((e) => {
+    void api
+      .plan(e.cwd, e.planId)
+      .then((d) => {
+        setPlanSelection({ id: e.planId, nonce: Date.now() });
+        seedChat(`Here is a draft plan to refine:\n\n${d.body}`, 'plan', e.cwd);
+      })
+      .catch(() => {
+        // Plan body unavailable; still surface it in the workspace.
+        setProject(e.cwd);
+        setPlanSelection({ id: e.planId, nonce: Date.now() });
+        setNav('plans');
+      });
+  }, []);
 
   // ⌘J / Ctrl+J toggles the bottom terminal panel, matching Codex.
   useEffect(() => {
@@ -375,16 +415,18 @@ function Shell(): React.ReactElement {
               <FileTree project={project} onMention={mentionFile} onOpenFile={openFileInEditor} />
             </aside>
           )}
-          <div className={cls('min-h-0 flex-1', nav === 'chat' ? 'overflow-hidden' : 'overflow-y-auto')}>
+          <div className={cls('min-h-0 flex-1', nav === 'chat' || nav === 'plans' ? 'overflow-hidden' : 'overflow-y-auto')}>
             {nav === 'chat' ? (
               <ChatPage
                 chatId={chatId}
                 project={project}
                 projects={allProjects}
                 insertText={insertText}
+                seed={chatSeed}
                 onProjectChange={setProject}
                 onAddFolder={() => void openExistingFolder()}
                 onChanges={setChanges}
+                onViewPlan={(planId) => viewPlan(planId)}
                 onSessionCreated={(id) => {
                   setChatId(id);
                   setChatsKey((k) => k + 1);
@@ -394,8 +436,21 @@ function Shell(): React.ReactElement {
             ) : (
               // Universal page container: one place controls width + side
               // margins for every section so they stay consistent.
-              <div className="mx-auto w-full max-w-6xl px-12 py-6">
+              <div className={cls('mx-auto w-full max-w-6xl px-12 py-6', nav === 'plans' && 'h-full')}>
                 {nav === 'overview' && <OverviewArea />}
+                {nav === 'plans' && (
+                  <PlansPage
+                    project={project}
+                    selection={planSelection}
+                    onStartBuild={(_id, body) =>
+                      seedChat(
+                        `Execute this plan step by step. Implement it fully.\n\n${body}`,
+                        'agent',
+                      )
+                    }
+                    onRefine={(_id, body) => seedChat(`Here is a draft plan to refine:\n\n${body}`, 'plan')}
+                  />
+                )}
                 {nav === 'loops' && <LoopsPage projects={allProjects} project={project} />}
                 {nav === 'plugins' && <PluginsPage project={project} />}
                 {nav === 'settings' && <SettingsArea onBack={() => setNav(prevNav)} />}

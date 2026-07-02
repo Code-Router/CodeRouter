@@ -2,14 +2,18 @@ import type {
   ActivityEvent,
   ChatMessageRecord,
   ChatSession,
+  Citation,
+  Clarification,
   LoopEvent,
   LoopIteration,
   LoopRecord,
   LoopSpec,
   LoopValidation,
+  PlanFrontmatter,
+  PlanPhase,
 } from '@coderouter/core';
 
-export type { ActivityEvent };
+export type { ActivityEvent, Citation, Clarification, PlanFrontmatter, PlanPhase };
 
 /**
  * Daemon client. Resolves the loopback daemon URL (from the Electron
@@ -182,6 +186,33 @@ export const api = {
   stopProcess: (pid: number) => req<{ ok: boolean }>('POST', '/api/processes/stop', { pid }),
   // open a local URL in the user's default browser
   openUrl: (url: string) => req<{ ok: boolean; url?: string; error?: string }>('POST', '/api/preview', { url }),
+
+  // plans (Plan workspace)
+  plans: (cwd: string) => req<{ plans: PlanSummary[] }>('GET', `/api/plans?cwd=${encodeURIComponent(cwd)}`),
+  plan: (cwd: string, id: string) =>
+    req<PlanDetail>('GET', `/api/plan?cwd=${encodeURIComponent(cwd)}&id=${encodeURIComponent(id)}`),
+  savePlan: (body: { cwd: string; id: string; body?: string; phases?: PlanPhase[]; status?: string }) =>
+    req<{ ok: boolean; path: string }>('PUT', '/api/plan', body),
+  handoffPlan: (body: { cwd: string; planId?: string; body?: string }) =>
+    req<{ ok: boolean; planId: string }>('POST', '/api/plans/handoff', body),
+};
+
+export type PlanSummary = {
+  id: string;
+  title: string;
+  status: string;
+  mode: 'plan' | 'masterplan';
+  route: string;
+  effort: string;
+  createdAt: string;
+  phaseCount: number;
+};
+export type PlanDetail = {
+  frontmatter: PlanFrontmatter;
+  body: string;
+  citations: Citation[];
+  title: string;
+  path: string;
 };
 
 export type FileEntry = { name: string; type: 'dir' | 'file'; path: string };
@@ -204,6 +235,14 @@ export type ChatStreamEvent =
       diff: string | null;
       filesChanged: string[];
       applied?: boolean;
+      // Plan metadata (populated for plan/masterplan runs)
+      planId?: string | null;
+      planPath?: string | null;
+      phases?: PlanPhase[];
+      openQuestions?: string[];
+      clarifications?: Clarification[];
+      escalationHint?: string | null;
+      citations?: Citation[];
     }
   | { type: 'error'; error: string };
 
@@ -296,8 +335,16 @@ export async function execCommand(
   }
 }
 
+/**
+ * CLI -> app handoff signal, broadcast on the shared loop-events channel.
+ * The app opens the referenced plan in the Plan workspace for refinement.
+ */
+export type PlanOpenEvent = { type: 'plan-open'; cwd: string; planId: string; refine?: boolean; at: number };
+
 /** Subscribe to live loop events over SSE. Returns an unsubscribe fn. */
-export async function subscribeLoopEvents(onEvent: (e: LoopEvent | { type: 'hello' }) => void): Promise<() => void> {
+export async function subscribeLoopEvents(
+  onEvent: (e: LoopEvent | { type: 'hello' } | PlanOpenEvent) => void,
+): Promise<() => void> {
   const base = await resolveBase();
   const es = new EventSource(`${base}/api/loops/events`);
   es.onmessage = (msg) => {

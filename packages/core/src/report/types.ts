@@ -1,4 +1,6 @@
 import type { ChatMessage } from '../agent/transport/types.js';
+import type { Clarification } from '../clarify/types.js';
+import type { PlanPhase } from '../modes/planFile.js';
 import type { WorktreeHandle } from '../modes/types.js';
 import type { InjectionFinding } from '../security/injection.js';
 import type {
@@ -47,6 +49,22 @@ export type Report = {
    * file. Lets the UI point the user at the saved, editable plan.
    */
   planPath?: string;
+  /**
+   * Stable id of the saved plan (`plan-<runId>` / `mp-<runId>`). The app uses
+   * it to load/open the plan in the Plan workspace.
+   */
+  planId?: string;
+  /**
+   * Structured plan phases (title, intent, status) so the UI can render a
+   * checklist instead of re-parsing markdown. Empty when not a plan run.
+   */
+  phases?: PlanPhase[];
+  /**
+   * Pre-plan clarifications the detector flagged (distinct from planner
+   * `OPEN:` lines). The UI surfaces these so the user can resolve ambiguity
+   * before building.
+   */
+  clarifications?: Clarification[];
   /** Optional human-readable text artifact (plan markdown / debug tree). */
   text?: string;
   /**

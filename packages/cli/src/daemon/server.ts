@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isAbsolute, join as joinPath, relative as relativePath, resolve as resolvePath } from 'node:path';
-import type { ActivityEvent, ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode } from '@coderouter/core';
-import { PRESETS, discoverVerifiers, generateLoopSpec, openStore, resolveDbPath, sandbox, validateLoopSpec } from '@coderouter/core';
+import type { ActivityEvent, ChatMessage, Effort, LoopEvent, LoopSpec, LoopPreset, Mode, PlanPhase } from '@coderouter/core';
+import { loadPlanFile, newEmptyPlanFile, parsePlanFile, PRESETS, discoverVerifiers, generateLoopSpec, openStore, resolveDbPath, sandbox, savePlanFile, validateLoopSpec } from '@coderouter/core';
 import { CLI_VERSION } from '../version.js';
 import { getAutoApply, getRunMode } from '../ui/setup.js';
 import { handle as handleDashboard, readJson, sendJson } from '../dashboard/server.js';
@@ -53,7 +53,16 @@ function wireSupervisor(): void {
 }
 
 function broadcast(event: LoopEvent): void {
-  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  broadcastRaw(event);
+}
+
+/**
+ * Push an arbitrary JSON frame to every SSE client on the shared
+ * `/api/loops/events` channel. Used for non-loop notifications like
+ * `plan-open` (CLI -> app handoff); the app filters by `type`.
+ */
+function broadcastRaw(obj: unknown): void {
+  const payload = `data: ${JSON.stringify(obj)}\n\n`;
   for (const res of sseClients) {
     try {
       res.write(payload);
@@ -288,6 +297,36 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, cwd: str
     return handlePreview(req, res);
   }
 
+  // ---- plans ------------------------------------------------------
+  // GET /api/plans?cwd= -> list saved plans (.coderouter/plans/*.plan.md).
+  if (method === 'GET' && path === '/api/plans') {
+    const project = url.searchParams.get('cwd') ?? cwd;
+    return sendJson(res, 200, { plans: await listPlans(project) });
+  }
+
+  // GET /api/plan?cwd=&id= -> load one parsed plan (frontmatter + body).
+  if (method === 'GET' && path === '/api/plan') {
+    const project = url.searchParams.get('cwd') ?? cwd;
+    const id = url.searchParams.get('id');
+    if (!id) return sendJson(res, 400, { error: 'id required' });
+    const plan = await loadPlanById(project, id);
+    return sendJson(res, plan ? 200 : 404, plan ?? { error: 'not found' });
+  }
+
+  // PUT /api/plan -> save an edited plan body / phases / status.
+  if (method === 'PUT' && path === '/api/plan') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handlePlanSave(req, res, cwd);
+  }
+
+  // POST /api/plans/handoff -> CLI pushes a draft plan; the daemon persists
+  // it (if needed) and broadcasts a `plan-open` event so a running app can
+  // open it in the Plan workspace for refinement.
+  if (method === 'POST' && path === '/api/plans/handoff') {
+    if (!allowedOrigin(req)) return sendJson(res, 403, { error: 'cross-origin request rejected' });
+    return handlePlanHandoff(req, res, cwd);
+  }
+
   // ---- loops ------------------------------------------------------
   if (path === '/api/loops' || path.startsWith('/api/loops/')) {
     const handled = await handleLoops(req, res, cwd, method, path, url);
@@ -488,7 +527,7 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
     const apply = typeof body.apply === 'boolean' ? body.apply : getAutoApply();
     const runMode = getRunMode();
 
-    const { output } = await executeRun({
+    const { output, report } = await executeRun({
       cwd: project,
       prompt,
       mode,
@@ -518,6 +557,15 @@ async function handleChatSend(req: IncomingMessage, res: ServerResponse, daemonC
       diff: output.diff ?? null,
       filesChanged: output.filesChanged ?? [],
       applied: apply,
+      // Plan metadata (parity with the CLI REPL): lets the app open the
+      // saved plan in the Plan workspace and highlight decisions to confirm.
+      planId: report.planId ?? null,
+      planPath: report.planPath ?? null,
+      phases: report.phases ?? [],
+      openQuestions: report.openQuestions ?? [],
+      clarifications: report.clarifications ?? [],
+      escalationHint: report.escalationHint ?? null,
+      citations: report.citations ?? [],
     });
   } catch (e) {
     send({ type: 'error', error: e instanceof Error ? e.message : String(e) });
@@ -560,6 +608,148 @@ async function handleChangesRevert(req: IncomingMessage, res: ServerResponse, da
   } catch (e) {
     return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
   }
+}
+
+// ---- plans -------------------------------------------------------
+
+type PlanSummary = {
+  id: string;
+  title: string;
+  status: string;
+  mode: 'plan' | 'masterplan';
+  route: string;
+  effort: string;
+  createdAt: string;
+  phaseCount: number;
+};
+
+function plansDir(project: string): string {
+  return joinPath(resolvePath(project), '.coderouter', 'plans');
+}
+
+/**
+ * Derive a human title from a plan body: prefer a top-level `# heading`
+ * (stripping a `Masterplan:` prefix), else the first line under `## Task`.
+ */
+function deriveTitleFromBody(body: string): string | undefined {
+  const h1 = /^#\s+(.+)$/m.exec(body);
+  if (h1?.[1]) return h1[1].replace(/^Masterplan:\s*/i, '').trim().slice(0, 100);
+  const task = /^##\s+Task\s*\n+(.+)$/m.exec(body);
+  if (task?.[1]) return task[1].trim().slice(0, 100);
+  return undefined;
+}
+
+async function listPlans(project: string): Promise<PlanSummary[]> {
+  const dir = plansDir(project);
+  let files: string[];
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith('.plan.md'));
+  } catch {
+    return [];
+  }
+  const out: PlanSummary[] = [];
+  for (const f of files) {
+    try {
+      const raw = await readFile(joinPath(dir, f), 'utf8');
+      const plan = parsePlanFile(raw);
+      out.push({
+        id: plan.frontmatter.planId,
+        title: deriveTitleFromBody(plan.body) ?? plan.frontmatter.planId,
+        status: plan.frontmatter.status,
+        mode: plan.frontmatter.planId.startsWith('mp-') ? 'masterplan' : 'plan',
+        route: plan.frontmatter.route,
+        effort: plan.frontmatter.effort,
+        createdAt: plan.frontmatter.createdAt,
+        phaseCount: plan.frontmatter.phases.length,
+      });
+    } catch {
+      // Skip malformed plan files rather than failing the whole listing.
+    }
+  }
+  return out.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+}
+
+async function loadPlanById(
+  project: string,
+  id: string,
+): Promise<{ frontmatter: unknown; body: string; citations: unknown; title: string; path: string } | null> {
+  const safeId = id.replace(/[^a-zA-Z0-9._-]/g, '');
+  const path = joinPath(plansDir(project), `${safeId}.plan.md`);
+  try {
+    const plan = await loadPlanFile(path);
+    return {
+      frontmatter: plan.frontmatter,
+      body: plan.body,
+      citations: plan.citations,
+      title: deriveTitleFromBody(plan.body) ?? id,
+      path,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function handlePlanSave(req: IncomingMessage, res: ServerResponse, daemonCwd: string): Promise<void> {
+  const body = await readJson(req);
+  const project = String(body.cwd ?? daemonCwd);
+  const id = String(body.id ?? '').trim().replace(/[^a-zA-Z0-9._-]/g, '');
+  if (!id) return sendJson(res, 400, { error: 'id required' });
+  const path = joinPath(plansDir(project), `${id}.plan.md`);
+  let plan;
+  try {
+    plan = await loadPlanFile(path);
+  } catch {
+    return sendJson(res, 404, { error: 'plan not found' });
+  }
+  if (typeof body.body === 'string') plan.body = body.body;
+  if (Array.isArray(body.phases)) plan.frontmatter.phases = body.phases as PlanPhase[];
+  if (typeof body.status === 'string') {
+    plan.frontmatter.status = body.status as typeof plan.frontmatter.status;
+  }
+  try {
+    const saved = await savePlanFile(project, plan);
+    return sendJson(res, 200, { ok: true, path: saved });
+  } catch (e) {
+    return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+/**
+ * Create a draft plan file from raw markdown (used when a handoff arrives
+ * for a plan that isn't on disk yet). Returns the plan id.
+ */
+async function createDraftPlan(project: string, markdown: string, planId?: string): Promise<string> {
+  const id = (planId || `plan-${randomUUID().slice(0, 8)}`).replace(/[^a-zA-Z0-9._-]/g, '');
+  const plan = newEmptyPlanFile({ planId: id, runId: id, route: 'draft', effort: 'medium' });
+  plan.body = markdown;
+  plan.frontmatter.status = 'draft';
+  await savePlanFile(project, plan);
+  return id;
+}
+
+async function handlePlanHandoff(req: IncomingMessage, res: ServerResponse, daemonCwd: string): Promise<void> {
+  const body = await readJson(req);
+  const project = String(body.cwd ?? daemonCwd);
+  let planId = String(body.planId ?? '').trim();
+  const draft = typeof body.body === 'string' ? body.body : '';
+  try {
+    if (planId) {
+      const existing = await loadPlanById(project, planId);
+      if (!existing) {
+        if (!draft) return sendJson(res, 404, { error: 'plan not found and no body to create it' });
+        planId = await createDraftPlan(project, draft, planId);
+      }
+    } else if (draft) {
+      planId = await createDraftPlan(project, draft);
+    } else {
+      return sendJson(res, 400, { error: 'planId or body required' });
+    }
+  } catch (e) {
+    return sendJson(res, 422, { ok: false, error: e instanceof Error ? e.message : String(e) });
+  }
+  // Notify any running app to open this plan for refinement.
+  broadcastRaw({ type: 'plan-open', cwd: project, planId, refine: true, at: Date.now() });
+  return sendJson(res, 200, { ok: true, planId });
 }
 
 /**

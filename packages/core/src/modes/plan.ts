@@ -180,7 +180,7 @@ export function extractOpenQuestions(text: string): string[] {
   return out;
 }
 
-function extractPhases(text: string): import('./planFile.js').PlanPhase[] {
+export function extractPhases(text: string): import('./planFile.js').PlanPhase[] {
   const phases: import('./planFile.js').PlanPhase[] = [];
   const lineRe = /^\s*(?:Phase\s*)?(\d+)[\).:]\s*(.+)$/gm;
   let m: RegExpExecArray | null = lineRe.exec(text);
