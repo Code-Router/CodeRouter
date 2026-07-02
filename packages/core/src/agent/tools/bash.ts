@@ -28,9 +28,10 @@ export const bashTool: Tool = {
     'run without per-call confirmation. ' +
     'Set `background: true` to start a long-running process (dev server, watcher) that keeps ' +
     'running after this call returns - use it for `npm run dev`, `python -m http.server`, etc. ' +
-    'A local server URL is auto-detected and shown to the user with an "Open in browser" button, ' +
-    'so you do NOT need a browser yourself; just start the server in the background and tell the ' +
-    'user it is ready. Use `timeout_ms` to bound foreground commands.',
+    'A local server URL is auto-detected and opened for the user in an in-app browser preview ' +
+    '(plus an "Open in browser" button), so you do NOT need a browser yourself and must NEVER ' +
+    'claim you cannot open one; just start the server in the background and tell the user it is ' +
+    'ready with the URL. Use `timeout_ms` to bound foreground commands.',
   parameters: {
     type: 'object',
     properties: {

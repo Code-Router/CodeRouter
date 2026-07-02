@@ -8,6 +8,7 @@ import {
   FolderOpen,
   FolderPlus,
   FolderTree,
+  Globe,
   LayoutDashboard,
   type LucideIcon,
   Monitor,
@@ -30,6 +31,7 @@ import { Logo } from './components/Logo';
 import { Terminal } from './components/Terminal';
 import { ChangesPanel } from './components/ChangesPanel';
 import { FileTree } from './components/FileTree';
+import { Preview } from './components/Preview';
 import { LoopsPage } from './pages/Loops';
 import { ChatPage, type ChatChanges, type ChatSeed } from './pages/Chat';
 import { OverviewArea } from './pages/OverviewArea';
@@ -77,6 +79,10 @@ function Shell(): React.ReactElement {
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  // In-app browser preview: opens automatically when the agent starts a
+  // dev server whose URL we detect.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [insertText, setInsertText] = useState<{ text: string; nonce: number } | null>(null);
   const [changes, setChanges] = useState<ChatChanges | null>(null);
   // Plan workspace: which plan to open, and a pending chat seed (prompt +
@@ -261,6 +267,13 @@ function Shell(): React.ReactElement {
     });
   };
 
+  // Auto-open the in-app browser when the agent starts a dev server whose
+  // URL we detected. Only steal focus the first time / when the URL changes.
+  const showServerUrl = (url: string): void => {
+    setPreviewUrl(url);
+    setPreviewOpen(true);
+  };
+
   const activeName = allProjects.find((p) => p.cwd === project)?.name;
 
   return (
@@ -405,6 +418,7 @@ function Shell(): React.ReactElement {
               <span className="mr-1 max-w-[180px] truncate text-xs text-muted">{activeName}</span>
             )}
             <PanelToggle icon={FolderTree} active={filesOpen} onClick={() => setFilesOpen((o) => !o)} title="Toggle file explorer" />
+            <PanelToggle icon={Globe} active={previewOpen} onClick={() => setPreviewOpen((o) => !o)} title="Toggle browser preview" />
             <PanelToggle icon={PanelRight} active={sidePanelOpen} onClick={() => setSidePanelOpen((o) => !o)} title="Toggle changes panel" />
             <PanelToggle icon={PanelBottom} active={bottomPanelOpen} onClick={() => setBottomPanelOpen((o) => !o)} title="Toggle terminal (⌘J)" />
           </div>
@@ -426,6 +440,7 @@ function Shell(): React.ReactElement {
                 onProjectChange={setProject}
                 onAddFolder={() => void openExistingFolder()}
                 onChanges={setChanges}
+                onServerUrl={showServerUrl}
                 onViewPlan={(planId) => viewPlan(planId)}
                 onSessionCreated={(id) => {
                   setChatId(id);
@@ -457,6 +472,11 @@ function Shell(): React.ReactElement {
               </div>
             )}
           </div>
+          {previewOpen && (
+            <aside className="w-[34rem] max-w-[50vw] shrink-0 border-l border-border bg-panel">
+              <Preview url={previewUrl} isElectron={Boolean(window.coderouter?.isElectron)} onClose={() => setPreviewOpen(false)} />
+            </aside>
+          )}
           {sidePanelOpen && (
             <aside className="w-96 shrink-0 border-l border-border bg-panel">
               <ChangesPanel changes={changes} />

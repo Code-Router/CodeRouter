@@ -205,6 +205,9 @@ async function createWindow(): Promise<void> {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Enable <webview> so the in-app browser preview panel can render
+      // localhost dev servers the agent starts (Cursor/Claude-style).
+      webviewTag: true,
     },
   });
 
@@ -216,6 +219,21 @@ async function createWindow(): Promise<void> {
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
+  });
+
+  // Harden any <webview> the renderer attaches: strip node integration /
+  // preload, and route popups from the previewed page to the external
+  // browser rather than spawning uncontrolled windows.
+  win.webContents.on('will-attach-webview', (_event, webPreferences) => {
+    delete (webPreferences as { preload?: string }).preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+  });
+  win.webContents.on('did-attach-webview', (_event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      void shell.openExternal(url);
+      return { action: 'deny' };
+    });
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {

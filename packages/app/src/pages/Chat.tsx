@@ -129,6 +129,7 @@ export function ChatPage({
   onAddFolder,
   onSessionCreated,
   onChanges,
+  onServerUrl,
   onViewPlan,
 }: {
   chatId: string | null;
@@ -142,6 +143,8 @@ export function ChatPage({
   onAddFolder?: () => void;
   onSessionCreated: (id: string) => void;
   onChanges?: (c: ChatChanges | null) => void;
+  /** Open the in-app browser preview at a detected dev-server URL. */
+  onServerUrl?: (url: string) => void;
   /** Open the Plan workspace focused on a plan id (from a plan/masterplan turn). */
   onViewPlan?: (planId: string) => void;
 }): React.ReactElement {
@@ -245,6 +248,8 @@ export function ChatPage({
               return next;
             });
           } else if (e.type === 'activity') {
+            // Auto-open the in-app browser when a dev server URL is detected.
+            if (e.event.kind === 'process_started' && e.event.url) onServerUrl?.(e.event.url);
             setMessages((m) => {
               const next = [...m];
               const last = next[next.length - 1];
@@ -330,7 +335,7 @@ export function ChatPage({
     return (
       <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-4">
         <h2 className="mb-6 text-3xl font-semibold tracking-tight">What should we build?</h2>
-        <div className="w-full"><ProcessBar cwd={project} active={busy} /></div>
+        <div className="w-full"><ProcessBar cwd={project} active={busy} onPreview={onServerUrl} /></div>
         <div className="w-full">{composer}</div>
         {error && <div className="mt-3 w-full rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
         <div className="mt-4 w-full divide-y divide-border/60 border-t border-border/60">
@@ -369,7 +374,7 @@ export function ChatPage({
         </div>
       </div>
       <div className="mx-auto w-full max-w-2xl px-6 pb-4">
-        <ProcessBar cwd={project} active={busy} />
+        <ProcessBar cwd={project} active={busy} onPreview={onServerUrl} />
         {error && <div className="mb-2 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</div>}
         <div className="pt-1">{composer}</div>
       </div>
@@ -383,7 +388,15 @@ export function ChatPage({
  * prunes ones that have exited. Each row can be opened in the browser or
  * stopped.
  */
-function ProcessBar({ cwd, active }: { cwd: string | null; active: boolean }): React.ReactElement | null {
+function ProcessBar({
+  cwd,
+  active,
+  onPreview,
+}: {
+  cwd: string | null;
+  active: boolean;
+  onPreview?: (url: string) => void;
+}): React.ReactElement | null {
   const [procs, setProcs] = useState<import('../lib/api').RunningProcess[]>([]);
   const [stopping, setStopping] = useState<number | null>(null);
 
@@ -435,11 +448,20 @@ function ProcessBar({ cwd, active }: { cwd: string | null; active: boolean }): R
           </span>
           {p.url && <span className="truncate font-mono text-[11px] text-muted" title={p.url}>{p.url}</span>}
           <span className="ml-auto flex shrink-0 items-center gap-2">
+            {p.url && onPreview && (
+              <button
+                onClick={() => onPreview(p.url as string)}
+                className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 font-medium text-white transition-colors hover:bg-accent/80"
+                title={`Preview ${p.url} in the app`}
+              >
+                Preview
+              </button>
+            )}
             {p.url && (
               <button
                 onClick={() => void api.openUrl(p.url as string)}
-                className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 font-medium text-white transition-colors hover:bg-accent/80"
-                title={`Open ${p.url} in your browser`}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 font-medium text-muted transition-colors hover:text-text"
+                title={`Open ${p.url} in your external browser`}
               >
                 Open in browser
               </button>
