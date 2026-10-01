@@ -16,6 +16,12 @@
 </p>
 
 <p align="center">
+  <img src=".github/assets/demo-app.gif" alt="CodeRouter desktop app building a snake game from one prompt" width="900" />
+  <br />
+  <sub>One prompt in the desktop app: planned, built in a sandbox, verified, and previewed. Real run, fast-forwarded.</sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/Code-Router/CodeRouter/releases/latest"><strong>Download</strong></a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="https://github.com/Code-Router/CodeRouter/issues/new/choose">Report a bug</a>
@@ -62,6 +68,12 @@ First launch walks you through adding an API key (or auto-detects a Claude Code 
 Run `coderouter init` to register CodeRouter as an MCP server for your host agent.
 
 ## Quick start
+
+<p align="center">
+  <img src=".github/assets/demo-cli.gif" alt="CodeRouter CLI routing prompts and applying a change" width="900" />
+  <br />
+  <sub>A trivial edit routes to a cheap model, a redesign to a frontier one; <code>run --apply</code> lands the change.</sub>
+</p>
 
 ```bash
 coderouter                            # interactive REPL
