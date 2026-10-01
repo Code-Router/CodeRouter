@@ -4,6 +4,10 @@
       <stop offset="0" stop-color="#74e86a"/>
       <stop offset="1" stop-color="#16c45a"/>
     </linearGradient>
+    <linearGradient id="track" x1="-166.4" y1="0" x2="30" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22c55e" stop-opacity="0"/>
+      <stop offset="1" stop-color="#22c55e" stop-opacity=".45"/>
+    </linearGradient>
     <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
       <circle cx="1.5" cy="1.5" r="1.1" fill="#ffffff" fill-opacity="0.06"/>
     </pattern>
@@ -11,29 +15,33 @@
       <stop offset="0" stop-color="#22c55e" stop-opacity="0.16"/>
       <stop offset="1" stop-color="#22c55e" stop-opacity="0"/>
     </radialGradient>
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+    <filter id="glow" filterUnits="userSpaceOnUse" x="-200" y="-50" width="450" height="300">
       <feGaussianBlur stdDeviation="3" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <clipPath id="card"><rect width="1200" height="340" rx="24"/></clipPath>
     <style>
       .s { fill: none; stroke: url(#g); stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; }
+      .track { fill: none; stroke: url(#track); stroke-width: 4; stroke-linecap: round; }
       .draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.1s cubic-bezier(.65,0,.35,1) forwards; }
-      .d1 { animation-delay: .15s; } .d2 { animation-delay: .55s; } .d3 { animation-delay: .8s; } .d4 { animation-delay: 1s; }
+      .d0 { animation-delay: 0s; } .d1 { animation-delay: .25s; } .d2 { animation-delay: .6s; } .d3 { animation-delay: .8s; }
       .head { opacity: 0; transform-box: fill-box; transform-origin: 30% 50%; animation: pop .45s cubic-bezier(.3,1.6,.5,1) forwards; }
       .h1 { animation-delay: 1.35s; } .h2 { animation-delay: 1.5s; } .h3 { animation-delay: 1.65s; }
-      .pulse { fill: none; stroke: #f0fff4; stroke-width: 8; filter: url(#glow); stroke-linecap: round; stroke-dasharray: 5 95; stroke-dashoffset: 5; opacity: 0;
-               animation: run 2.4s cubic-bezier(.45,0,.55,1) infinite; }
-      .p1 { animation-delay: 2.0s; } .p2 { animation-delay: 2.5s; } .p3 { animation-delay: 3.0s; }
+      .pulse { fill: none; stroke: #f0fff4; stroke-width: 8; stroke-linecap: round; filter: url(#glow); opacity: 0;
+               animation-duration: 3.6s; animation-timing-function: linear; animation-iteration-count: infinite; animation-delay: 2s; }
       .word { opacity: 0; animation: word .9s cubic-bezier(.2,.8,.2,1) 1.2s forwards; }
       .word text { font: 700 92px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: -2.5px; }
       .word .tag { font: 500 22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .5px; }
       .breath { transform-origin: 336px 170px; animation: breath 4.8s ease-in-out 2s infinite; }
       @keyframes draw { to { stroke-dashoffset: 0; } }
       @keyframes pop { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: scale(1); } }
-      @keyframes run { 0% { stroke-dashoffset: 5; opacity: 0; } 8% { opacity: .95; } 85% { opacity: .95; } 100% { stroke-dashoffset: -95; opacity: 0; } }
       @keyframes word { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
       @keyframes breath { 0%, 100% { opacity: .55; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
+      @keyframes pin { 0%, 0.0% { stroke-dashoffset: 9; opacity: 0; } 0.5% { opacity: 1; } 38.0% { opacity: 1; } 42.0%, 100% { stroke-dashoffset: -196.4; opacity: 0; } }
+      @keyframes ptop { 0%, 42.0% { stroke-dashoffset: 9; opacity: 0; } 42.5% { opacity: 1; } 77.3% { opacity: 1; } 81.3%, 100% { stroke-dashoffset: -183.9; opacity: 0; } }
+      @keyframes pmid { 0%, 42.0% { stroke-dashoffset: 9; opacity: 0; } 42.5% { opacity: 1; } 85.4% { opacity: 1; } 89.4%, 100% { stroke-dashoffset: -221.5; opacity: 0; } }
+      @keyframes plow { 0%, 42.0% { stroke-dashoffset: 9; opacity: 0; } 42.5% { opacity: 1; } 82.6% { opacity: 1; } 86.6%, 100% { stroke-dashoffset: -208.5; opacity: 0; } }
+      @keyframes pbot { 0%, 42.0% { stroke-dashoffset: 9; opacity: 0; } 42.5% { opacity: 1; } 76.5% { opacity: 1; } 80.5%, 100% { stroke-dashoffset: -179.9; opacity: 0; } }
       @media (prefers-reduced-motion: reduce) {
         .draw { animation: none; stroke-dashoffset: 0; } .head, .word { animation: none; opacity: 1; } .pulse, .breath { animation: none; opacity: 0; }
       }
@@ -47,24 +55,24 @@
   </g>
   <rect x=".5" y=".5" width="1199" height="339" rx="23.5" fill="none" stroke="#ffffff" stroke-opacity=".08"/>
 
-  <!-- the mark, drawn on a 200-unit grid -->
   <g transform="translate(203 45) scale(1.25)">
-    <path class="s draw d1" pathLength="1" d="M140 57 L92 27 L30 66 L30 134 L92 173 L140 143"/>
-    <path class="s draw d2" pathLength="1" d="M58 62 L82 102 L46 138"/>
-    <path class="s draw d2" pathLength="1" d="M82 102 L112 102"/>
-    <path class="s draw d3" pathLength="1" d="M72 48 L106 80 L120 80 L140 101 L174 101"/>
-    <path class="s draw d4" pathLength="1" d="M62 152 L106 122 L120 122 L138 103"/>
-    <path class="s draw d3" pathLength="1" d="M140 57 L156 57"/>
-    <path class="s draw d3" pathLength="1" d="M140 143 L152 143"/>
+    <path class="track draw d0" pathLength="1" d="M-166.40 100.00 L30.00 100.00"/>
+    <path class="s draw d1" pathLength="1" d="M30.00 100.00 L30.00 66.00 L92.00 27.00 L140.00 57.00 L156.00 57.00"/>
+    <path class="s draw d1" pathLength="1" d="M30.00 100.00 L30.00 134.00 L92.00 173.00 L140.00 143.00 L152.00 143.00"/>
+    <path class="s draw d2" pathLength="1" d="M56.00 49.65 L82.00 102.00 L50.00 146.58"/>
+    <path class="s draw d2" pathLength="1" d="M82.00 102.00 L112.00 102.00"/>
+    <path class="s draw d3" pathLength="1" d="M74.00 38.32 L106.00 80.00 L120.00 80.00 L140.00 101.00 L174.00 101.00"/>
+    <path class="s draw d3" pathLength="1" d="M62.00 154.13 L106.00 122.00 L120.00 122.00 L138.00 103.00"/>
 
     <path class="s head h1" d="M150 46 L161 57 L150 68"/>
     <path class="s head h2" d="M170 90 L181 101 L170 112"/>
     <path class="s head h3" d="M146 132 L157 143 L146 154"/>
 
-    <!-- routed packets: one stream in, three routes out -->
-    <path class="pulse p1" pathLength="100" d="M30 100 L30 66 L92 27 L140 57 L158 57"/>
-    <path class="pulse p2" pathLength="100" d="M72 48 L106 80 L120 80 L140 101 L178 101"/>
-    <path class="pulse p3" pathLength="100" d="M30 100 L30 134 L92 173 L140 143 L154 143"/>
+    <path class="pulse" style="stroke-dasharray:9 205.4;animation-name:pin" d="M-166.40 100.00 L30.00 100.00"/>
+    <path class="pulse" style="stroke-dasharray:9 192.9;animation-name:ptop" d="M30.00 100.00 L30.00 66.00 L92.00 27.00 L140.00 57.00 L160.00 57.00"/>
+    <path class="pulse" style="stroke-dasharray:9 230.5;animation-name:pmid" d="M30.00 100.00 L30.00 66.00 L74.00 38.32 L106.00 80.00 L120.00 80.00 L140.00 101.00 L180.00 101.00"/>
+    <path class="pulse" style="stroke-dasharray:9 217.5;animation-name:plow" d="M30.00 100.00 L30.00 134.00 L62.00 154.13 L106.00 122.00 L120.00 122.00 L138.00 103.00 L180.00 101.00"/>
+    <path class="pulse" style="stroke-dasharray:9 188.9;animation-name:pbot" d="M30.00 100.00 L30.00 134.00 L92.00 173.00 L140.00 143.00 L156.00 143.00"/>
   </g>
 
   <g class="word">
