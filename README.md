@@ -1,12 +1,35 @@
-# CodeRouter
+<p align="center">
+  <img src=".github/assets/logo.png" alt="CodeRouter logo" width="120" height="120" />
+</p>
 
-<img width="1024" height="191" alt="CodeRouter banner" src="https://github.com/user-attachments/assets/d8eacfbd-1d65-4546-982f-16a15718e670" />
+<h1 align="center">CodeRouter</h1>
 
-**Route smarter. Build faster.**
+<p align="center">
+  <strong>An AI assistant and coding agent that picks the right model for every task.</strong>
+</p>
 
-One assistant that picks the right model for every task: fast, cheap models for the easy 80%, frontier models for the hard 20%. Ask it anything and it just answers. Point it at a project and it becomes a coding agent that runs each change in a safe sandbox, checks it, and learns what works on your repo.
+<p align="center">
+  CodeRouter sits between you and every AI model you have access to. Ask it a question and it answers;
+  point it at a project and it plans the work, runs each change in a safe sandbox, checks it, and learns
+  what works on your repo. Behind the scenes it routes each step to the model that fits it: fast, cheap
+  models for routine work, frontier models for the hard parts. You stop choosing models. You just build.
+</p>
 
-Works with your existing **Claude Code** or **Codex** CLI, or any API key: OpenAI, Anthropic, OpenRouter, DeepSeek, Groq, or a local Ollama model.
+<p align="center">
+  <a href="https://github.com/Code-Router/CodeRouter/releases/latest"><strong>Download</strong></a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="https://github.com/Code-Router/CodeRouter/issues/new/choose">Report a bug</a>
+</p>
+
+---
+
+## Why CodeRouter
+
+- **One assistant, any model.** Works with your existing **Claude Code** or **Codex** CLI, or any API key: OpenAI, Anthropic, OpenRouter, DeepSeek, Groq, or a local Ollama model.
+- **Chat or code.** Questions, emails, summaries and research get one well-routed answer. Coding tasks get a full pipeline: plan, execute in an isolated git worktree, validate, review.
+- **Spend where it matters.** Most of a coding session isn't hard. Renames, boilerplate and "where is X?" go to fast, cheap models; deep reasoning, refactors and architecture get the frontier ones.
+- **See every decision.** Each model pick is logged with its reason, and routing improves from the outcomes of your own runs.
+- **A full desktop app.** Chats, plans, loops, sessions, cost tracking with a monthly budget, a built-in image studio, browser and terminal in one place.
 
 ## Download
 
