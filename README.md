@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/banner.webp" alt="CodeRouter" width="900" />
+  <img src=".github/assets/banner.svg" alt="CodeRouter" width="900" />
 </p>
 
 <p align="center">
