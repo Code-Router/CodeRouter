@@ -1,8 +1,6 @@
 <p align="center">
-  <img src=".github/assets/logo.png" alt="CodeRouter logo" width="120" height="120" />
+  <img src=".github/assets/banner.png" alt="CodeRouter" width="900" />
 </p>
-
-<h1 align="center">CodeRouter</h1>
 
 <p align="center">
   <strong>An AI assistant and coding agent that picks the right model for every task.</strong>
