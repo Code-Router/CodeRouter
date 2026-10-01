@@ -29,7 +29,7 @@
 
 ## Why CodeRouter
 
-- **One assistant, any model.** Works with your existing **Claude Code** or **Codex** CLI, or any API key: OpenAI, Anthropic, OpenRouter, DeepSeek, Groq, or a local Ollama model.
+- **One assistant, every model.** One OpenRouter key gives CodeRouter the whole catalog: Anthropic, OpenAI, Google, DeepSeek, Moonshot, Z.ai and more. Its own agent runs the work, so there's no other tool to install.
 - **Chat or code.** Questions, emails, summaries and research get one well-routed answer. Coding tasks get a full pipeline: plan, execute in an isolated git worktree, validate, review.
 - **Spend where it matters.** Most of a coding session isn't hard. Renames, boilerplate and "where is X?" go to fast, cheap models; deep reasoning, refactors and architecture get the frontier ones.
 - **See every decision.** Each model pick is logged with its reason, and routing improves from the outcomes of your own runs.
@@ -59,7 +59,7 @@ npm install -g coderouter-cli
 coderouter          # or the short alias: cr
 ```
 
-First launch walks you through adding an API key (or auto-detects a Claude Code / Codex CLI you already have). `coderouter app` launches the desktop app from the terminal.
+First launch walks you through adding your OpenRouter key. `coderouter app` launches the desktop app from the terminal.
 
 ### Inside Claude Code / Codex (MCP)
 
